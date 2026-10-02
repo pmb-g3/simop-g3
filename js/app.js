@@ -74,7 +74,12 @@ function dcClear() {
   [localStorage, sessionStorage].forEach(st => { try { Object.keys(st).filter(k => k.indexOf('simop-dc:') === 0).forEach(k => st.removeItem(k)); } catch (e) { } });
 }
 function dcPatch(action, payload, fn) { const h = DC.mem[dcKey(action, payload)]; if (h) { try { fn(h.d); dcSave(); } catch (e) { } } }
-function apiM(action, payload, quiet) {
+function dcPeek(action, payload) { const h = DC.mem[dcKey(action, payload)]; return h ? clone(h.d) : null; }
+function dcFresh(action, payload, onChange) {
+  const h = DC.mem[dcKey(action, payload)], old = h ? JSON.stringify(h.d) : null;
+  return apiM(action, payload, true, { silent: true }).then(r => { if (JSON.stringify(r.data) !== old && onChange) { try { onChange(clone(r.data)); } catch (e) { } } return r.data; }).catch(() => null);
+}
+function apiM(action, payload, quiet, o) {
   const rd = READ_ACT.has(action), key = rd ? dcKey(action, payload) : '';
   if (rd && DC.mode === 'only') {
     const h = DC.mem[key];
@@ -87,7 +92,7 @@ function apiM(action, payload, quiet) {
   if (optRow) AppState.optRow = null;
   if (optRow) optRow.classList.add('opt-out');
   const isFile = action === 'file.get';
-  return gasPost('api', [AppState.token, action, payload || {}], { prio: DC.bg ? 2 : isFile ? 1 : 0, idem: rd || isFile, track: !isFile, bg: DC.bg }).then(res => {
+  return gasPost('api', [AppState.token, action, payload || {}], { prio: DC.bg ? 2 : (isFile || (o && o.silent)) ? 1 : 0, idem: rd || isFile, track: !isFile && !(o && o.silent), bg: DC.bg }).then(res => {
     if (!q) loader(-1);
     if (res && res.success) {
       if (rd) {
@@ -99,6 +104,7 @@ function apiM(action, payload, quiet) {
     }
     if (optRow) optRow.classList.remove('opt-out');
     if (res && res.code === 'AUTH') { forceLogout(res.message); throw new Error(res.message); }
+    if (!rd && action !== 'file.get' && res && res.success === false) AppState.needNet = true;
     throw new Error((res && res.message) || 'Respons kosong dari server.');
   }, err => { if (!q) loader(-1); if (optRow) optRow.classList.remove('opt-out'); throw err; });
 }
@@ -295,11 +301,30 @@ function setActiveNav(id) {
   $$('[data-nav]').forEach(b => b.classList.toggle('active', b.dataset.nav === id));
   const it = AppState.menu.find(x => x.id === id); $('#pageTitle').textContent = it ? it.label : 'SIMOP';
 }
+function isTyping() {
+  const c = document.getElementById('app-container'), a = document.activeElement;
+  if (c && a && c.contains(a) && /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName)) return true;
+  return !!(c && [...c.querySelectorAll('input[type="search"]')].some(i => i.value));
+}
 function uiBusy() {
-  return AppState.uiDirty || document.body.classList.contains('modal-open') || document.body.classList.contains('drawer-open') ||
+  return (AppState.uiDirty && Date.now() - (AppState.lastAct || 0) < 1500) || isTyping() || document.body.classList.contains('modal-open') || document.body.classList.contains('drawer-open') ||
     (AppState.page === 'presensi' && S.pres && S.pres.changed && Object.keys(S.pres.changed).length > 0);
 }
+async function repaintFromCache() {
+  if (!AppState.token || !AppState.page || uiBusy()) return;
+  const id = AppState.page, seq = AppState.seq; let r = null;
+  DC.mode = 'only';
+  try { r = await PAGES[id](AppState.pageOpts || {}); } catch (e) { r = null; } finally { DC.mode = 'net'; }
+  if (r && seq === AppState.seq && !uiBusy()) { paintPage(r, true); AppState.pending = false; }
+}
+setInterval(() => {
+  if (!AppState.token || uiBusy()) return;
+  if (AppState.needNet && NET.inflight === 0) { AppState.needNet = false; AppState.pending = false; navigateTo(AppState.page, { force: true }); }
+  else if (AppState.pending) repaintFromCache();
+}, 1200);
+new MutationObserver(() => { if (!document.body.classList.contains('modal-open') && (AppState.pending || AppState.needNet)) setTimeout(() => { if (AppState.needNet && !uiBusy() && NET.inflight === 0) { AppState.needNet = false; AppState.pending = false; navigateTo(AppState.page, { force: true }); } else if (AppState.pending) repaintFromCache(); }, 120); }).observe(document.body, { attributes: true, attributeFilter: ['class'] });
 function paintPage(r, keepScroll) {
+  AppState.pending = false;
   const c = $('#app-container'), y = window.scrollY;
   c.innerHTML = typeof r === 'string' ? r : r.html;
   if (r && r.init) r.init(c);
@@ -331,7 +356,7 @@ async function navigateTo(id, opts) {
     if (seq !== AppState.seq) return true;
     if (!onScreen || keep) paintPage(r, onScreen);
     else if (DC.changed && !uiBusy()) paintPage(r, true);
-    else Object.keys(S).forEach(k => { if (S[k] !== snap[k]) { if (k in snap) S[k] = snap[k]; else delete S[k]; } });
+    else { if (DC.changed) AppState.pending = true; Object.keys(S).forEach(k => { if (S[k] !== snap[k]) { if (k in snap) S[k] = snap[k]; else delete S[k]; } }); }
     return true;
   } catch (e) {
     if (seq !== AppState.seq || !AppState.token) return false;
@@ -351,7 +376,7 @@ async function refreshQuiet() {
     const r = await PAGES[id](AppState.pageOpts || {});
     if (seq !== AppState.seq) return;
     if (DC.changed && !uiBusy()) paintPage(r, true);
-    else Object.keys(S).forEach(k => { if (S[k] !== snap[k]) { if (k in snap) S[k] = snap[k]; else delete S[k]; } });
+    else { if (DC.changed) AppState.pending = true; Object.keys(S).forEach(k => { if (S[k] !== snap[k]) { if (k in snap) S[k] = snap[k]; else delete S[k]; } }); }
   } catch (e) {
     if (seq === AppState.seq) { Object.keys(S).forEach(k => { if (S[k] !== snap[k]) { if (k in snap) S[k] = snap[k]; else delete S[k]; } }); setSyncError(e.message); }
   }
@@ -870,9 +895,17 @@ function piketHtml() {
   return `<div class="page-head"><div><h1>Jadwal piket staff</h1><p>Petugas penanggung jawab harian (Sabtu \u2013 Kamis), berulang setiap minggu.</p></div><button class="btn-x btn-g" onclick="piketAdd()"><i class="bi bi-plus-lg"></i> Tambah petugas piket</button></div>
   <div class="grid3">${cards}</div>`;
 }
+const pkOpts = names => names.map(n => `<label class="pk-opt" data-q="${E(n.toLowerCase())}"><input type="checkbox" class="check pk-chk" value="${E(n)}"> ${E(n)}</label>`).join('');
 async function piketAdd(hari) {
-  let names = []; try { names = await api('piket.staff'); } catch (e) { }
-  const list = names.map((n, i) => `<label class="pk-opt" data-q="${E(n.toLowerCase())}"><input type="checkbox" class="check pk-chk" value="${E(n)}"> ${E(n)}</label>`).join('');
+  const names = dcPeek('piket.staff', {}) || [];
+  const list = pkOpts(names);
+  dcFresh('piket.staff', {}, d => {
+    const box = $('.pk-list'); if (!box) return;
+    const on = $$('.pk-chk:checked').map(x => x.value);
+    box.innerHTML = pkOpts(d) || '<div class="muted" style="padding:.5rem">Belum ada akun Admin aktif.</div>';
+    $$('.pk-chk').forEach(x => { if (on.indexOf(x.value) >= 0) x.checked = true; });
+    const q = $('#pkQ'); if (q && q.value) pkFilter();
+  });
   openForm({
     title: 'Tambah petugas piket', submit: 'Simpan',
     fields: [
@@ -892,7 +925,8 @@ async function piketAdd(hari) {
 function pkFilter() { const q = $('#pkQ').value.trim().toLowerCase(); $$('.pk-opt').forEach(el => { el.hidden = !!q && el.dataset.q.indexOf(q) < 0; }); }
 async function piketEdit(id) {
   const item = S.piket.days.flatMap(d => d.items).find(x => x.ID === id);
-  let names = []; try { names = await api('piket.staff'); } catch (e) { }
+  const names = dcPeek('piket.staff', {}) || [];
+  dcFresh('piket.staff', {}, d => { const dl = $('#f_StaffNama_dl'); if (dl) dl.innerHTML = d.map(n => `<option value="${E(n)}">`).join(''); });
   openForm({
     title: 'Ubah petugas piket', submit: 'Simpan',
     fields: [{ k: 'Hari', l: 'Hari', t: 'select', req: true, opts: ['Sabtu', 'Ahad', 'Senin', 'Selasa', 'Rabu', 'Kamis'] }, { k: 'StaffNama', l: 'Nama staf', req: true, list: names, help: 'Ketik untuk memilih dari akun Admin, atau isi nama lain.' }],
@@ -1057,8 +1091,18 @@ function programKosong() {
   const s = S.dash && S.dash.d.subKosong[0];
   programForm(null, s ? { Bagian: 'Tambal Sulam', SubBagianID: s.ID } : null);
 }
+const subOpts = list => list.filter(x => x.Status === 'Aktif').map(x => ({ v: x.ID, l: x.Bagian + ' \u00B7 ' + x.Nama }));
 async function programForm(rec, preset) {
-  const sub = (await api('sub.list')).filter(x => x.Status === 'Aktif');
+  const pl = dcPeek('program.list', {});
+  let subAll = dcPeek('sub.list', {}) || (S.prog && S.prog.sub) || (pl && pl.sub) || null;
+  if (!subAll) subAll = await api('sub.list');
+  const sub = subAll.filter(x => x.Status === 'Aktif');
+  dcFresh('sub.list', {}, d => {
+    const el = $('#f_SubBagianID'); if (!el) return;
+    const v = el.value, first = el.options[0] ? el.options[0].outerHTML : '';
+    el.innerHTML = first + subOpts(d).map(o => `<option value="${E(o.v)}">${E(o.l)}</option>`).join('');
+    el.value = v;
+  });
   const fields = [
     { k: 'Tanggal', l: 'Tanggal mulai', t: 'date', req: true }, { k: 'Bagian', l: 'Bagian', t: 'select', opts: ['Tambal Sulam', 'Proyek'], req: true },
     { k: 'SubBagianID', l: 'Sub-bagian', t: 'select', blank: '\u2014 Lokasi bebas (isi kolom di bawah) \u2014', opts: sub.map(x => ({ v: x.ID, l: x.Bagian + ' \u00B7 ' + x.Nama })), full: true, help: 'Master sub-bagian dikelola lewat tombol "Kelola sub-bagian".' },
@@ -1116,10 +1160,19 @@ function camReview() {
     footer: `<button class="btn-x btn-o" onclick="cameraStart()"><i class="bi bi-arrow-counterclockwise"></i> Ulangi</button><button class="btn-x btn-p" onclick="camJenis()"><i class="bi bi-check2"></i> Sesuai, lanjut</button>`
   });
 }
+const camSort = rows => rows.slice().sort((a, b) => ((a.Status === 'Selesai') - (b.Status === 'Selesai')) || b.Tanggal.localeCompare(a.Tanggal));
+const camOpts = rows => rows.map(p => `<label class="cam-opt" data-q="${E(((p.Uraian || '') + ' ' + p.SubBagian + ' ' + p.Bagian).toLowerCase())}"><input type="radio" name="camPid" value="${p.ID}"><span><b>${E(p.Uraian || p.SubBagian)}</b><small>${E(p.SubBagian + ' \u00B7 ' + p.Bagian + ' \u00B7 ' + (p.Status === 'Berjalan' ? 'Proses' : p.Status))}</small></span></label>`).join('');
 async function camJenis() {
-  let rows = [];
-  try { rows = (await api('program.list')).rows; } catch (e) { }
-  rows = rows.slice().sort((a, b) => ((a.Status === 'Selesai') - (b.Status === 'Selesai')) || b.Tanggal.localeCompare(a.Tanggal));
+  const pc = dcPeek('program.list', {});
+  let rows = camSort((pc && pc.rows) || (S.prog && S.prog.rows) || []);
+  dcFresh('program.list', {}, d => {
+    const box = $('#camProg'); if (!box) return;
+    const pick = ($('input[name="camPid"]:checked') || {}).value;
+    box.innerHTML = camOpts(camSort(d.rows));
+    if (pick) { const r = box.querySelector(`input[value="${pick}"]`); if (r) r.checked = true; }
+    const ada = $('input[name="camTo"][value="ada"]'); if (ada) ada.disabled = !d.rows.length;
+    if ($('#camQ') && $('#camQ').value) camFilter();
+  });
   openModal({
     title: 'Jenis foto',
     body: `<div class="row-f gap2 mb2"><img alt="" src="${S.cam.foto.preview}" style="width:84px;height:63px;object-fit:cover;border-radius:.5rem;flex:none"><div class="muted">Pilih jenis foto, lalu tentukan programnya.</div></div>
@@ -1128,7 +1181,7 @@ async function camJenis() {
       <span class="lbl mt2">Simpan ke</span>
       <label class="li" style="cursor:pointer"><input type="radio" name="camTo" value="baru" checked onchange="camTo()"> <b>Program baru</b> <span class="muted">\u2014 isi form Tambah program</span></label>
       <label class="li" style="cursor:pointer"><input type="radio" name="camTo" value="ada" onchange="camTo()"${rows.length ? '' : ' disabled'}> <b>Program yang sudah ada</b></label>
-      <div id="camProgBox" hidden><input class="inp mt1" id="camQ" type="search" placeholder="Ketik nama program atau sub-bagian\u2026" oninput="camFilter()" aria-label="Cari program"><div class="cam-list" id="camProg" role="radiogroup">${rows.map(p => `<label class="cam-opt" data-q="${E(((p.Uraian || '') + ' ' + p.SubBagian + ' ' + p.Bagian).toLowerCase())}"><input type="radio" name="camPid" value="${p.ID}"><span><b>${E(p.Uraian || p.SubBagian)}</b><small>${E(p.SubBagian + ' \u00B7 ' + p.Bagian + ' \u00B7 ' + (p.Status === 'Berjalan' ? 'Proses' : p.Status))}</small></span></label>`).join('')}</div><div class="muted tc" id="camNone" hidden style="padding:.5rem;font-size:12px">Tidak ada program yang cocok.</div></div>`,
+      <div id="camProgBox" hidden><input class="inp mt1" id="camQ" type="search" placeholder="Ketik nama program atau sub-bagian\u2026" oninput="camFilter()" aria-label="Cari program"><div class="cam-list" id="camProg" role="radiogroup">${camOpts(rows)}</div><div class="muted tc" id="camNone" hidden style="padding:.5rem;font-size:12px">Tidak ada program yang cocok.</div></div>`,
     footer: `<button class="btn-x btn-o" onclick="camReview()">Kembali</button><button class="btn-x btn-p" onclick="camNext(this)"><i class="bi bi-arrow-right"></i> Lanjut</button>`
   });
 }
@@ -1247,14 +1300,20 @@ async function matDel(id) {
   if (!(await confirmBox('Hapus pesanan ini? Tindakan tercatat di audit dan tidak dapat dibatalkan.', 'Ya, hapus'))) return;
   await act(null, async () => { const r = await apiM('material.delete', { id: id }); toast(r.message, 'ok'); navigateTo(AppState.page); });
 }
+const katOpts = rows => rows.map(k => `<option value="${E(k.Material)}">${E(k.Satuan)} \u00B7 ${Rp(k.Harga)}</option>`).join('');
 async function orderForm() {
-  const k = await api('katalog.list'); S.orderKat = k.rows;
-  if (!k.rows.length) { toast('Katalog toko masih kosong. Tambahkan item di tab Katalog toko atau ketik item manual.', ''); }
+  const kc = dcPeek('katalog.list', {});
+  S.orderKat = kc ? kc.rows : [];
+  dcFresh('katalog.list', {}, d => {
+    S.orderKat = d.rows; const dl = $('#katDL'); if (dl) dl.innerHTML = katOpts(d.rows);
+    if (!d.rows.length && $('#katDL')) toast('Katalog toko masih kosong. Ketik nama barang, satuan, dan harga secara manual.', '');
+  });
+  if (kc && !kc.rows.length) toast('Katalog toko masih kosong. Ketik nama barang, satuan, dan harga secara manual.', '');
   openModal({
     title: 'Pesan material ke Toko KUK', size: 'lg',
     body: `<div class="form-grid"><div><label class="lbl" for="ordBag">Bagian <span style="color:#dc2626">*</span></label><select class="inp" id="ordBag"><option>Tambal Sulam</option><option>Proyek</option></select></div><div><label class="lbl" for="ordTuj">Alokasi / sub-bagian tujuan <span style="color:#dc2626">*</span></label><input class="inp" id="ordTuj" placeholder="Mis. Rusunawa Asatidz Lt. 2" maxlength="100"></div></div>
       <div class="mt2 fw6">Daftar material</div><div class="help">Ketik nama barang untuk mencari di katalog. Satuan dan harga mengikuti katalog; jika barang belum ada di katalog, isi satuan dan harganya sendiri.</div>
-      <datalist id="katDL">${S.orderKat.map(k => `<option value="${E(k.Material)}">${E(k.Satuan)} \u00B7 ${Rp(k.Harga)}</option>`).join('')}</datalist>
+      <datalist id="katDL">${katOpts(S.orderKat)}</datalist>
       <div id="ordLines" class="mt1"></div>
       <div class="row-f between wrap gap1 mt1"><button class="btn-x btn-o btn-sm" onclick="addOrderLine()"><i class="bi bi-plus-lg"></i> Tambah baris</button><div class="fw7 num" id="ordEst">Perkiraan total: Rp 0</div></div>`,
     footer: `<button class="btn-x btn-o" data-bs-dismiss="modal">Batal</button><button class="btn-x btn-g" id="ordGo" onclick="submitOrder(this)"><i class="bi bi-send"></i> Kirim pesanan</button>`
