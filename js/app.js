@@ -301,6 +301,16 @@ function setActiveNav(id) {
   $$('[data-nav]').forEach(b => b.classList.toggle('active', b.dataset.nav === id));
   const it = AppState.menu.find(x => x.id === id); $('#pageTitle').textContent = it ? it.label : 'SIMOP';
 }
+const PAGE_KEYS = {};
+function pageKeys(id) {
+  if (!PAGE_KEYS[id]) {
+    const set = new Set([id]);
+    (String(PAGES[id] || '').match(/S\.(\w+)\s*=(?!=)/g) || []).forEach(m => set.add(m.slice(2).replace(/\s*=$/, '')));
+    PAGE_KEYS[id] = Array.from(set);
+  }
+  return PAGE_KEYS[id];
+}
+function restoreS(id, snap) { pageKeys(id).forEach(k => { if (S[k] !== snap[k]) { if (k in snap) S[k] = snap[k]; else delete S[k]; } }); }
 function isTyping() {
   const c = document.getElementById('app-container'), a = document.activeElement;
   if (c && a && c.contains(a) && /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName)) return true;
@@ -356,11 +366,11 @@ async function navigateTo(id, opts) {
     if (seq !== AppState.seq) return true;
     if (!onScreen || keep) paintPage(r, onScreen);
     else if (DC.changed && !uiBusy()) paintPage(r, true);
-    else { if (DC.changed) AppState.pending = true; Object.keys(S).forEach(k => { if (S[k] !== snap[k]) { if (k in snap) S[k] = snap[k]; else delete S[k]; } }); }
+    else { if (DC.changed) AppState.pending = true; restoreS(id, snap); }
     return true;
   } catch (e) {
     if (seq !== AppState.seq || !AppState.token) return false;
-    if (onScreen) { Object.keys(S).forEach(k => { if (S[k] !== snap[k]) { if (k in snap) S[k] = snap[k]; else delete S[k]; } }); setSyncError(e.message); }
+    if (onScreen) { restoreS(id, snap); setSyncError(e.message); }
     else c.innerHTML = errBox(e.message);
     AppState.lastNavError = e.message;
     return false;
@@ -376,9 +386,9 @@ async function refreshQuiet() {
     const r = await PAGES[id](AppState.pageOpts || {});
     if (seq !== AppState.seq) return;
     if (DC.changed && !uiBusy()) paintPage(r, true);
-    else { if (DC.changed) AppState.pending = true; Object.keys(S).forEach(k => { if (S[k] !== snap[k]) { if (k in snap) S[k] = snap[k]; else delete S[k]; } }); }
+    else { if (DC.changed) AppState.pending = true; restoreS(id, snap); }
   } catch (e) {
-    if (seq === AppState.seq) { Object.keys(S).forEach(k => { if (S[k] !== snap[k]) { if (k in snap) S[k] = snap[k]; else delete S[k]; } }); setSyncError(e.message); }
+    if (seq === AppState.seq) { restoreS(id, snap); setSyncError(e.message); }
   }
 }
 setInterval(() => { if (document.visibilityState === 'visible') refreshQuiet(); }, 90000);
@@ -417,7 +427,7 @@ async function prefetchMenus() {
     DC.bg = true;
     try { await PAGES[id]({}); } catch (e) { } finally { DC.bg = false; }
     if (AppState.page !== id) {
-      if (AppState.seq === seq0) Object.keys(S).forEach(k => { if (S[k] !== snap[k]) { if (k in snap) S[k] = snap[k]; else delete S[k]; } });
+      restoreS(id, snap);
       if (exp) S.expRange = exp; else delete S.expRange;
     }
     await new Promise(r => setTimeout(r, 60));
@@ -1056,6 +1066,7 @@ PAGES.program = async function () {
   };
 };
 function paintPrograms() {
+  if (!S.prog || !Array.isArray(S.prog.rows)) { const el0 = $('#progList'); if (el0) el0.innerHTML = skeleton(); if (AppState.page === 'program') setTimeout(() => navigateTo('program', { force: true }), 50); return; }
   const q = $('#progQ').value.trim().toLowerCase(), st = $('#progS').value, key = S.progKey || 'ini';
   $('#progRg').hidden = key !== 'rentang';
   const filt = p => (!st || p.Status === st) && (!q || rowText(p).indexOf(q) >= 0);
@@ -1708,7 +1719,7 @@ function importOpen(type) {
     body: `<div class="imp-cols"><b>Urutan kolom</b> <span class="muted">(baris judul boleh ikut disalin \u00B7 kolom "boleh kosong" bisa dilengkapi nanti lewat aplikasi)</span><div class="imp-chips">${sp.kolom.map((c, i) => `<span class="imp-chip"><em>${i + 1}</em>${E(c[1])}<small>${E(c[2])}</small></span>`).join('')}</div></div>
       <div class="row-f gap1 wrap mb2"><button type="button" class="btn-x btn-o btn-sm" onclick="impTemplate()"><i class="bi bi-download"></i> Unduh template Excel</button><label class="btn-x btn-o btn-sm" style="cursor:pointer"><i class="bi bi-folder2-open"></i> Pilih file Excel / CSV<input type="file" id="impFile" accept=".xlsx,.xls,.csv,.txt" hidden onchange="impFile(this)"></label></div>
       <label class="lbl" for="impText">Atau tempel langsung dari Excel</label>
-      <textarea class="inp" id="impText" rows="4" placeholder="Di Excel: blok tabelnya \u2192 Ctrl+C. Lalu klik di sini \u2192 Ctrl+V" oninput="impQueue()"></textarea>
+      <textarea class="inp" id="impText" data-type="${type}" rows="4" placeholder="Di Excel: blok tabelnya \u2192 Ctrl+C. Lalu klik di sini \u2192 Ctrl+V" oninput="impQueue()"></textarea>
       <div id="impPrev" class="mt2"></div>`,
     footer: `<button class="btn-x btn-o" data-bs-dismiss="modal">Batal</button><button class="btn-x btn-p" id="impGo" disabled onclick="impSave(this)"><i class="bi bi-cloud-upload"></i> Simpan</button>`
   });
@@ -1716,6 +1727,9 @@ function importOpen(type) {
 let impTimer = null;
 function impQueue() { clearTimeout(impTimer); impTimer = setTimeout(() => impCheck(impParse($('#impText').value)), 450); }
 async function impCheck(grid) {
+  const tp = ($('#impText') || {}).dataset ? $('#impText').dataset.type : '';
+  if (!tp) return;
+  if (!S.imp || S.imp.type !== tp) S.imp = { type: tp, rows: [], res: null };
   const sp = IMP[S.imp.type], m = impMap(S.imp.type, grid), box = $('#impPrev'); if (!box) return;
   S.imp.rows = m.rows; S.imp.res = null; $('#impGo').disabled = true;
   if (!m.rows.length) { box.innerHTML = ''; return; }
@@ -1741,6 +1755,8 @@ function impRender(header) {
   go.innerHTML = `<i class="bi bi-cloud-upload"></i> ${okN ? 'Simpan ' + okN + ' baris' : 'Tidak ada baris valid'}`;
 }
 async function impSave(btn) {
+  const tp = $('#impText') && $('#impText').dataset.type;
+  if (!S.imp || S.imp.type !== tp || !S.imp.res) return toast('Data berubah. Tempel ulang tabelnya lalu periksa kembali.', 'err');
   const sp = IMP[S.imp.type];
   return act(btn, async () => {
     const r = await apiM('import.save', { type: S.imp.type, rows: S.imp.rows });
