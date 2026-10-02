@@ -736,7 +736,7 @@ function dashProgGroupHtml(bagian) {
   const d = S.dash.d, all = (d.programByBagian.find(x => x.bagian === bagian) || { items: [] }).items;
   const rg = progRange(S.dashProg || 'ini', bagian, d.minggu);
   const list = all.filter(p => (!rg.from || p.Tanggal >= rg.from) && (!rg.to || p.Tanggal <= rg.to));
-  return programGroupHtml(bagian, list.slice(0, 4), { range: rg, more: list.length > 4 ? list.length - 4 : 0 });
+  return progCompactGroup(bagian, list.slice(0, 4), { range: rg, more: list.length > 4 ? list.length - 4 : 0 });
 }
 function setDashProg(k) {
   S.dashProg = k;
@@ -1185,14 +1185,16 @@ function progCompactGroup(bagian, list, opt) {
     return `<div class="sb-grp${col[id] ? ' col' : ''}"><button type="button" class="sb-h" onclick="progToggle(this,'${E(id).replace(/'/g, '&#39;')}')"><i class="bi bi-chevron-down"></i><b>${E(k || '(Tanpa sub-bagian)')}</b><span class="muted">${rows.length} program \u00B7 foto ${fotoOk}/${rows.length * 3}</span></button><div class="sb-b">${rows.map(p => progRow(p, ++n)).join('')}</div></div>`;
   }).join('') : emptyBox('Belum ada program ' + bagian + ' pada filter ini');
   return `<div class="grp grp-${bagian === 'Tambal Sulam' ? 'ts' : 'pr'}">
-    <div class="grp-h"><span>${E(bagian.toUpperCase())}${opt.range ? `<small class="grp-sub">${E(opt.range.label)}</small>` : ''}</span><span class="pill">${list.length} program</span></div>
+    <div class="grp-h"><span>${E(bagian.toUpperCase())}${opt.range ? `<small class="grp-sub">${E(opt.range.label)}</small>` : ''}</span><span class="pill">${list.length + (opt.more || 0)} program</span></div>
     <div class="grp-b">${body}
-      <div class="row-f between wrap gap1 mt2">${isStaff() ? `<button class="btn-x btn-p btn-sm" onclick="programForm(null,{Bagian:'${bagian}'})"><i class="bi bi-plus-lg"></i> Tambah program ${E(bagian)}</button>` : '<span></span>'}<button class="btn-x btn-o btn-sm" onclick="programExportGroup('${bagian}',this)"><i class="bi bi-file-earmark-word"></i> Export Docs ${E(bagian)} (sesuai tampilan)</button></div>
+      <div class="row-f between wrap gap1 mt2">${isStaff() ? `<button class="btn-x btn-p btn-sm" onclick="programForm(null,{Bagian:'${bagian}'})"><i class="bi bi-plus-lg"></i> Tambah program ${E(bagian)}</button>` : '<span></span>'}${opt.more ? `<button class="btn-x btn-o btn-sm" onclick="navigateTo('program')">Lihat ${opt.more} lainnya</button>` : ''}<button class="btn-x btn-o btn-sm" onclick="programExportGroup('${bagian}',this)"><i class="bi bi-file-earmark-word"></i> Export Docs ${E(bagian)} (sesuai tampilan)</button></div>
     </div></div>`;
 }
 function progToggle(btn, id) { const g = btn.parentElement; g.classList.toggle('col'); (S.progCol = S.progCol || {})[id] = g.classList.contains('col'); }
 async function fotoChip(btn) {
-  const pid = btn.dataset.pid, slot = btn.dataset.slot, p = (S.prog && S.prog.rows.find(x => x.ID === pid)) || null;
+  const pid = btn.dataset.pid, slot = btn.dataset.slot;
+  let p = (S.prog && S.prog.rows.find(x => x.ID === pid)) || null;
+  if (!p && S.dash && S.dash.d.programByBagian) S.dash.d.programByBagian.forEach(g => { p = p || g.items.find(x => x.ID === pid) || null; });
   if (!p) return;
   const url = p['Foto' + slot], nama = p.Uraian || p.SubBagian;
   if (!url) { if (isStaff()) uploadSlot(pid, slot, btn); return; }
@@ -1235,7 +1237,7 @@ function programUpdated(rec) {
   if (S.prog) { const i = S.prog.rows.findIndex(x => x.ID === rec.ID); if (i >= 0) S.prog.rows[i] = rec; }
   if (S.dash && S.dash.d.programByBagian) S.dash.d.programByBagian.forEach(g => { const i = g.items.findIndex(x => x.ID === rec.ID); if (i >= 0) g.items[i] = rec; });
   const el = $('#prog_' + rec.ID);
-  if (el) { if (AppState.page === 'program') paintPrograms(); else { const par = el.parentElement; el.outerHTML = programCard(rec); loadThumbs(par); } }
+  if (el) { if (AppState.page === 'program') paintPrograms(); else if (AppState.page === 'dashboard' && $('#dashProgs')) setDashProg(S.dashProg || 'ini'); else { const par = el.parentElement; el.outerHTML = programCard(rec); loadThumbs(par); } }
 }
 async function uploadSlot(pid, slot, el) {
   const f = await pickImage(); if (!f) return;
