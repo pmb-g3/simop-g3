@@ -650,3 +650,8 @@ body{overscroll-behavior:none}
 [data-theme="dark"] .imp-tbl .imp-err{color:#fca5a5}
 .spin-sm{display:inline-block;width:14px;height:14px;border:2px solid var(--border-2);border-top-color:var(--primary);border-radius:50%;animation:spin .8s linear infinite;vertical-align:-2px;margin-right:.35rem}
 .imp-tbl .imp-res{min-width:200px;max-width:280px}
+
+.exp-prog{display:flex;gap:1rem;align-items:center}
+.exp-ring{flex:none;width:44px;height:44px;border-radius:50%;border:4px solid var(--border-2);border-top-color:var(--primary);animation:spin .9s linear infinite}
+.exp-bar{height:6px;border-radius:9999px;background:var(--surface-2);overflow:hidden;margin-top:.6rem}
+.exp-bar span{display:block;height:100%;width:0;background:linear-gradient(90deg,#38bdf8,#6366f1);transition:width .8s ease}

@@ -45,7 +45,8 @@ function toast(msg, type) {
   setTimeout(() => el.remove(), type === 'err' ? 6500 : 3600);
 }
 const READ_ACT = new Set(['dash.get', 'karyawan.list', 'absensi.get', 'rekap.absensi', 'rekap.bayar', 'rekap.list', 'izin.list', 'sub.list', 'program.list', 'katalog.list', 'material.list', 'piket.list', 'piket.staff', 'keu.list', 'armada.list', 'admin.users', 'admin.audit', 'admin.config', 'pilihan.list', 'minggu.info', 'mat.rekap']);
-const DC = { mem: {}, mode: 'net', changed: false, bg: false, user: '' };
+const DC = { mem: {}, mode: 'net', changed: false, bg: false, user: '', ver: '', pv: {}, want: null, fresh: null };
+const NOWRITE = new Set(['file.get', 'file.thumbs', 'import.check', 'batch.read', 'sync.ver']);
 const DC_MISS = new Error('cache-miss');
 const dcKey = (a, p) => a + '|' + JSON.stringify(p || {});
 function dcStore() { try { return localStorage.getItem('simop-rt') ? localStorage : sessionStorage; } catch (e) { return sessionStorage; } }
@@ -53,6 +54,7 @@ const clone = o => (o === undefined ? o : JSON.parse(JSON.stringify(o)));
 function dcLoad() {
   DC.user = AppState.user ? AppState.user.username + ':' + AppState.user.role : '';
   try { DC.mem = JSON.parse(dcStore().getItem('simop-dc:' + DC.user) || '{}') || {}; } catch (e) { DC.mem = {}; }
+  try { DC.pv = JSON.parse(dcStore().getItem('simop-pv:' + DC.user) || '{}') || {}; } catch (e) { DC.pv = {}; }
 }
 let dcTimer = null;
 function dcSave() {
@@ -60,7 +62,7 @@ function dcSave() {
   dcTimer = setTimeout(() => {
     if (!DC.user) return;
     for (let tries = 0; tries < 6; tries++) {
-      try { dcStore().setItem('simop-dc:' + DC.user, JSON.stringify(DC.mem)); return; }
+      try { dcStore().setItem('simop-dc:' + DC.user, JSON.stringify(DC.mem)); dcStore().setItem('simop-pv:' + DC.user, JSON.stringify(DC.pv)); return; }
       catch (e) {
         const ks = Object.keys(DC.mem).sort((a, b) => DC.mem[a].t - DC.mem[b].t);
         if (!ks.length) return;
@@ -70,17 +72,26 @@ function dcSave() {
   }, 300);
 }
 function dcClear() {
-  DC.mem = {};
-  [localStorage, sessionStorage].forEach(st => { try { Object.keys(st).filter(k => k.indexOf('simop-dc:') === 0).forEach(k => st.removeItem(k)); } catch (e) { } });
+  DC.mem = {}; DC.pv = {};
+  thClear();
+  [localStorage, sessionStorage].forEach(st => { try { Object.keys(st).filter(k => k.indexOf('simop-dc:') === 0 || k.indexOf('simop-pv:') === 0).forEach(k => st.removeItem(k)); } catch (e) { } });
 }
 function dcPatch(action, payload, fn) { const h = DC.mem[dcKey(action, payload)]; if (h) { try { fn(h.d); dcSave(); } catch (e) { } } }
 function dcPeek(action, payload) { const h = DC.mem[dcKey(action, payload)]; return h ? clone(h.d) : null; }
+async function serverVer() {
+  try { const r = await apiM('sync.ver', {}, true, { silent: true }); DC.ver = r.data.ver; return r.data.ver; } catch (e) { return null; }
+}
 function dcFresh(action, payload, onChange) {
   const h = DC.mem[dcKey(action, payload)], old = h ? JSON.stringify(h.d) : null;
   return apiM(action, payload, true, { silent: true }).then(r => { if (JSON.stringify(r.data) !== old && onChange) { try { onChange(clone(r.data)); } catch (e) { } } return r.data; }).catch(() => null);
 }
 function apiM(action, payload, quiet, o) {
   const rd = READ_ACT.has(action), key = rd ? dcKey(action, payload) : '';
+  if (rd && DC.mode === 'collect') {
+    if (DC.fresh && DC.fresh.has(key) && DC.mem[key]) return Promise.resolve({ data: clone(DC.mem[key].d), message: 'OK', cached: true });
+    if (DC.want && !DC.want.has(key)) DC.want.set(key, { a: action, p: payload || {} });
+    return Promise.reject(DC_MISS);
+  }
   if (rd && DC.mode === 'only') {
     const h = DC.mem[key];
     if (h) DC.oldest = Math.max(DC.oldest || 0, Date.now() - h.t);
@@ -91,7 +102,7 @@ function apiM(action, payload, quiet, o) {
   const optRow = !rd && /delete|Delete|\.del$/.test(action) && Date.now() - (AppState.optAt || 0) < 20000 ? AppState.optRow : null;
   if (optRow) AppState.optRow = null;
   if (optRow) optRow.classList.add('opt-out');
-  const isFile = action === 'file.get';
+  const isFile = action === 'file.get' || action === 'file.thumbs';
   return gasPost('api', [AppState.token, action, payload || {}], { prio: DC.bg ? 2 : (isFile || (o && o.silent)) ? 1 : 0, idem: rd || isFile, track: !isFile && !(o && o.silent), bg: DC.bg }).then(res => {
     if (!q) loader(-1);
     if (res && res.success) {
@@ -99,12 +110,12 @@ function apiM(action, payload, quiet, o) {
         const js = JSON.stringify(res.data === undefined ? null : res.data), old = DC.mem[key];
         if (!old || JSON.stringify(old.d) !== js) DC.changed = true;
         DC.mem[key] = { t: Date.now(), d: JSON.parse(js) }; dcSave();
-      } else if (action !== 'file.get' && action !== 'import.check') { AppState.lastWrite = Date.now(); AppState.optRow = null; }
+      } else if (!NOWRITE.has(action)) { AppState.lastWrite = Date.now(); AppState.optRow = null; }
       return { data: res.data, message: res.message };
     }
     if (optRow) optRow.classList.remove('opt-out');
     if (res && res.code === 'AUTH') { forceLogout(res.message); throw new Error(res.message); }
-    if (!rd && action !== 'file.get' && action !== 'import.check' && res && res.success === false) AppState.needNet = true;
+    if (!rd && !NOWRITE.has(action) && res && res.success === false) AppState.needNet = true;
     throw new Error((res && res.message) || 'Respons kosong dari server.');
   }, err => { if (!q) loader(-1); if (optRow) optRow.classList.remove('opt-out'); throw err; });
 }
@@ -355,14 +366,21 @@ async function navigateTo(id, opts) {
     let r = null;
     try { r = await PAGES[id](opts); } catch (e) { r = null; } finally { DC.mode = 'net'; }
     if (r && seq === AppState.seq) { paintPage(r, false); shown = true; }
-    if (shown && DC.oldest < 4000) return true;
+    if (shown && DC.oldest < 4000) { serverVer(); return true; }
+    if (shown && DC.pv[id]) {
+      const v = await serverVer();
+      if (seq !== AppState.seq) return true;
+      if (v && v === DC.pv[id]) return true;
+    }
   }
   const onScreen = shown;
   if (!onScreen) c.innerHTML = skeleton();
   const snap = Object.assign({}, S);
   DC.changed = false;
+  const vBefore = DC.ver;
   try {
     const r = await PAGES[id](opts.force ? (AppState.pageOpts || {}) : opts);
+    if (vBefore) { DC.pv[id] = vBefore; dcSave(); }
     if (seq !== AppState.seq) return true;
     if (!onScreen || keep) paintPage(r, onScreen);
     else if (DC.changed && !uiBusy()) paintPage(r, true);
@@ -380,10 +398,15 @@ async function navigateTo(id, opts) {
 async function refreshQuiet() {
   if (!AppState.token || !AppState.page || uiBusy() || NET.inflight > 0 || DC.bg) return;
   if (Date.now() - (AppState.lastWrite || 0) < 4000) return;
+  const id0 = AppState.page, v = await serverVer();
+  if (!v || AppState.page !== id0) return;
+  if (DC.pv[id0] === v) return;
+  if (uiBusy() || NET.inflight > 0) return;
   const id = AppState.page, seq = AppState.seq, snap = Object.assign({}, S);
   DC.changed = false;
   try {
     const r = await PAGES[id](AppState.pageOpts || {});
+    DC.pv[id] = v; dcSave();
     if (seq !== AppState.seq) return;
     if (DC.changed && !uiBusy()) paintPage(r, true);
     else { if (DC.changed) AppState.pending = true; restoreS(id, snap); }
@@ -391,7 +414,7 @@ async function refreshQuiet() {
     if (seq === AppState.seq) { restoreS(id, snap); setSyncError(e.message); }
   }
 }
-setInterval(() => { if (document.visibilityState === 'visible') refreshQuiet(); }, 90000);
+setInterval(() => { if (document.visibilityState === 'visible') refreshQuiet(); }, 60000);
 document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && Date.now() - (NET.lastOk || 0) > 20000) refreshQuiet(); });
 
 /** Indikator sinkron di bilah atas */
@@ -417,21 +440,38 @@ const PREFETCH_ORDER = ['presensi', 'material', 'program', 'pembayaran', 'rekapm
 async function prefetchMenus() {
   const have = AppState.menu.map(m => m.id).filter(id => PAGES[id]);
   const ids = PREFETCH_ORDER.filter(id => have.indexOf(id) >= 0).concat(have.filter(id => PREFETCH_ORDER.indexOf(id) < 0));
-  if (have.indexOf('presensi') >= 0 && AppState.page !== 'presensi') { DC.bg = true; try { await api('absensi.get', { tanggal: todayStr() }); } catch (e) { } finally { DC.bg = false; } }
-  for (const id of ids) {
-    if (!AppState.token || id === AppState.page || id === 'presensi') continue;
-    if (Date.now() - (AppState.lastWrite || 0) < 4000) await new Promise(r => setTimeout(r, 1500));
-    for (let w = 0; w < 40 && (NET.queue[0].length || (NET.inflight > 0 && !DC.bg) || Date.now() - (AppState.lastAct || 0) < 1500); w++) await new Promise(r => setTimeout(r, 400));
-    if (!AppState.token) return;
-    const seq0 = AppState.seq, snap = Object.assign({}, S), exp = S.expRange ? Object.assign({}, S.expRange) : null;
-    DC.bg = true;
-    try { await PAGES[id]({}); } catch (e) { } finally { DC.bg = false; }
-    if (AppState.page !== id) {
-      restoreS(id, snap);
-      if (exp) S.expRange = exp; else delete S.expRange;
+  DC.fresh = new Set();
+  const firstVer = {};
+  for (let round = 0; round < 4 && AppState.token; round++) {
+    for (let w = 0; w < 40 && (NET.queue[0].length || NET.inflight > 0 || Date.now() - (AppState.lastAct || 0) < 1500); w++) await new Promise(r => setTimeout(r, 300));
+    DC.want = new Map();
+    for (const id of ids) {
+      if (id === AppState.page) continue;
+      const snap = Object.assign({}, S), exp = S.expRange ? Object.assign({}, S.expRange) : null;
+      DC.mode = 'collect';
+      try { await PAGES[id]({}); } catch (e) { } finally { DC.mode = 'net'; }
+      if (AppState.page !== id) { restoreS(id, snap); if (exp) S.expRange = exp; else delete S.expRange; }
     }
-    await new Promise(r => setTimeout(r, 60));
+    const want = Array.from(DC.want.entries()); DC.want = null;
+    if (!want.length) break;
+    for (let i = 0; i < want.length; i += 40) {
+      const part = want.slice(i, i + 40);
+      DC.bg = true;
+      let res = null;
+      try { res = await apiM('batch.read', { calls: part.map(x => ({ a: x[1].a, p: x[1].p })) }, true); } catch (e) { res = null; } finally { DC.bg = false; }
+      if (!res) continue;
+      const ver = res.data.ver, now = Date.now();
+      part.forEach((x, j) => {
+        const o = res.data.results[j];
+        if (o && o.ok) { DC.mem[x[0]] = { t: now, d: o.data === undefined ? null : o.data }; DC.fresh.add(x[0]); }
+      });
+      if (ver) { ids.forEach(id => { if (!(id in firstVer)) firstVer[id] = ver; }); }
+      dcSave();
+    }
   }
+  DC.fresh = null;
+  Object.keys(firstVer).forEach(id => { if (id !== AppState.page) DC.pv[id] = firstVer[id]; });
+  dcSave();
 }
 
 function showLogin(msg) {
@@ -523,19 +563,57 @@ document.addEventListener('click', e => {
   const pv = e.target.closest('[data-preview]');
   if (pv) previewFile(pv.dataset.preview, pv.dataset.title);
 });
-function loadThumbs(root) {
-  const els = $$('[data-thumb]', root || document).filter(x => !x.dataset.done); let i = 0;
-  const one = async () => {
-    while (i < els.length) {
-      const el = els[i++]; el.dataset.done = 1; const url = el.dataset.thumb;
+const TH = { db: null, ok: true };
+function thOpen() {
+  if (TH.db || !TH.ok || !window.indexedDB) return Promise.resolve(TH.db);
+  return new Promise(res => {
+    try {
+      const rq = indexedDB.open('simop-foto', 1);
+      rq.onupgradeneeded = () => rq.result.createObjectStore('th');
+      rq.onsuccess = () => { TH.db = rq.result; res(TH.db); };
+      rq.onerror = () => { TH.ok = false; res(null); };
+    } catch (e) { TH.ok = false; res(null); }
+  });
+}
+function thPersist() { try { return dcStore() === localStorage; } catch (e) { return false; } }
+async function thGetMany(urls) {
+  const out = {}, db = thPersist() ? await thOpen() : null; if (!db) return out;
+  await new Promise(res => { try { const st = db.transaction('th').objectStore('th'); let n = urls.length; if (!n) return res(); urls.forEach(u => { const g = st.get(u); g.onsuccess = () => { if (g.result) out[u] = g.result; if (!--n) res(); }; g.onerror = () => { if (!--n) res(); }; }); } catch (e) { res(); } });
+  return out;
+}
+async function thPutMany(map) {
+  const db = thPersist() ? await thOpen() : null; if (!db) return;
+  try { const tx = db.transaction('th', 'readwrite'), st = tx.objectStore('th'); Object.keys(map).forEach(u => { if (map[u]) st.put(map[u], u); }); } catch (e) { }
+}
+function thClear() { try { if (window.indexedDB) indexedDB.deleteDatabase('simop-foto'); } catch (e) { } TH.db = null; AppState.img = {}; }
+function thShow(el, d) {
+  if (el.dataset.shown) return; el.dataset.shown = 1;
+  if (d) el.insertAdjacentHTML('afterbegin', `<img alt="${E(el.dataset.title || 'Foto')}" src="${d}">`);
+  else el.insertAdjacentHTML('afterbegin', '<div class="empty" style="padding:.5rem"><i class="bi bi-image-alt" style="font-size:20px"></i></div>');
+  el.classList.remove('loading');
+}
+async function loadThumbs(root) {
+  const els = $$('[data-thumb]', root || document).filter(x => !x.dataset.done);
+  if (!els.length) return;
+  els.forEach(x => { x.dataset.done = 1; });
+  const byUrl = {}; els.forEach(el => { (byUrl[el.dataset.thumb] = byUrl[el.dataset.thumb] || []).push(el); });
+  const fill = (u, d) => { if (d) AppState.img[u] = d; (byUrl[u] || []).forEach(el => thShow(el, d)); delete byUrl[u]; };
+  Object.keys(byUrl).forEach(u => { if (AppState.img[u]) fill(u, AppState.img[u]); });
+  const fromDev = await thGetMany(Object.keys(byUrl));
+  Object.keys(fromDev).forEach(u => fill(u, fromDev[u]));
+  const need = Object.keys(byUrl), parts = [];
+  for (let i = 0; i < need.length; i += 12) parts.push(need.slice(i, i + 12));
+  const run = async () => {
+    while (parts.length) {
+      const part = parts.shift();
       try {
-        const d = AppState.img[url] || (AppState.img[url] = (await api('file.get', { url: url, thumb: 1 }, true)).dataUrl);
-        el.insertAdjacentHTML('afterbegin', `<img alt="${E(el.dataset.title || 'Foto')}" src="${d}">`);
-      } catch (e) { el.insertAdjacentHTML('afterbegin', '<div class="empty" style="padding:.5rem"><i class="bi bi-image-alt" style="font-size:20px"></i></div>'); }
-      el.classList.remove('loading');
+        const r = await apiM('file.thumbs', { urls: part }, true);
+        const got = {}; part.forEach(u => { const d = r.data.map[u] || null; if (d) got[u] = d; fill(u, d); });
+        thPutMany(got);
+      } catch (e) { part.forEach(u => fill(u, null)); }
     }
   };
-  one(); one();
+  await Promise.all([run(), run()]);
 }
 
 const greet = () => { const h = new Date().getHours(); return h < 11 ? 'Pagi' : h < 15 ? 'Siang' : h < 18 ? 'Sore' : 'Malam'; };
@@ -663,7 +741,17 @@ function setDashProg(k) {
 }
 function programExportGroup(bagian, btn) {
   const rg = (S.expRange || {})[bagian] || {};
-  return act(btn, async () => { toast('Menyusun laporan dokumentasi ' + (rg.label || '') + '\u2026'); const r = await apiM('program.exportDocGroup', { bagian: bagian, from: rg.from || '', to: rg.to || '', label: rg.label || '' }); showExport(r.data, 'Buka Google Docs'); });
+  const rows = ((S.prog && S.prog.rows) || []).filter(p => p.Bagian === bagian && (!rg.from || p.Tanggal >= rg.from) && (!rg.to || p.Tanggal <= rg.to));
+  const nFoto = rows.reduce((n, p) => n + ['FotoBefore', 'FotoDuring', 'FotoAfter'].filter(k => p[k]).length, 0);
+  const est = Math.max(8, Math.round(4 + rows.length * 0.6 + nFoto * 0.9));
+  return act(btn, async () => {
+    openModal({ title: 'Menyusun laporan Docs', body: `<div class="exp-prog"><div class="exp-ring"></div><div><b>${E(bagian)} \u00B7 ${E(rg.label || '')}</b><p class="muted" style="margin:.25rem 0 0">${rows.length ? rows.length + ' program, ' + nFoto + ' foto' : 'Menyiapkan data'}. Perkiraan \u00B1${est} detik.</p><div class="exp-bar"><span id="expBar"></span></div><p class="muted" id="expTime" style="margin:.35rem 0 0;font-size:12px">0 detik</p></div></div><p class="help mt2">Google Docs membuat dokumen dan menyisipkan setiap foto satu per satu, jadi makin banyak foto makin lama. Jendela ini boleh ditutup; proses tetap berjalan dan tautan muncul setelah selesai.</p>` });
+    const t0 = Date.now(), tick = setInterval(() => { const d = Math.round((Date.now() - t0) / 1000), el = $('#expTime'), bar = $('#expBar'); if (el) el.textContent = d + ' detik' + (d > est ? ' \u00B7 sedikit lebih lama dari perkiraan, mohon tunggu' : ''); if (bar) bar.style.width = Math.min(95, Math.round(d / est * 100)) + '%'; }, 1000);
+    try {
+      const r = await apiM('program.exportDocGroup', { bagian: bagian, from: rg.from || '', to: rg.to || '', label: rg.label || '' });
+      clearInterval(tick); closeModal(); showExport(r.data, 'Buka Google Docs');
+    } catch (e) { clearInterval(tick); closeModal(); throw e; }
+  });
 }
 
 function dashToko(d) {
