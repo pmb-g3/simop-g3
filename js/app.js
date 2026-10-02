@@ -924,7 +924,7 @@ function crud(cfg) {
 function crudHtml(cfg) {
   const st = S[cfg.id], canDel = !cfg.delRoles || cfg.delRoles.indexOf(role()) >= 0;
   const cols = cfg.cols.concat([{ l: '', f: r => `<div class="actions">${cfg.rowActions ? cfg.rowActions(r) : ''}<button class="btn-x btn-o btn-sm" onclick="crudEdit('${cfg.id}','${r.ID}')"><i class="bi bi-pencil"></i><span class="hide-m">Ubah</span></button>${canDel ? `<button class="btn-x btn-d btn-sm" onclick="crudDel('${cfg.id}','${r.ID}')" aria-label="Hapus"><i class="bi bi-trash"></i></button>` : ''}</div>` }]);
-  return `<div class="page-head"><div><h1>${E(cfg.title)}</h1><p>${E(cfg.sub)}</p></div><div class="row-f gap1 wrap">${cfg.importType ? `<button class="btn-x btn-o" onclick="importOpen('${cfg.importType}')"><i class="bi bi-file-earmark-spreadsheet"></i> Impor Excel</button>` : ''}<button class="btn-x btn-p" onclick="crudAdd('${cfg.id}')"><i class="bi bi-plus-lg"></i> ${E(cfg.add)}</button></div></div>
+  return `<div class="page-head"><div><h1>${E(cfg.title)}</h1><p>${E(cfg.sub)}</p></div><div class="row-f gap1 wrap">${cfg.headBtn || ''}${cfg.importType ? `<button class="btn-x btn-o" onclick="importOpen('${cfg.importType}')"><i class="bi bi-file-earmark-spreadsheet"></i> Impor Excel</button>` : ''}<button class="btn-x btn-p" onclick="crudAdd('${cfg.id}')"><i class="bi bi-plus-lg"></i> ${E(cfg.add)}</button></div></div>
   ${cfg.header ? cfg.header(st) : ''}
   <section class="card-x"><div class="tools">${searchBox('q_' + cfg.id, 'tb_' + cfg.id, 'Cari\u2026')}</div>${tableHtml('tb_' + cfg.id, cols, st.rows, { cls: cfg.cls || '', empty: cfg.empty || 'Belum ada data', emptySub: cfg.emptySub || 'Klik "' + cfg.add + '" untuk menambah.' })}</section>`;
 }
@@ -943,7 +943,7 @@ async function crudDel(id, rid) {
   if (!(await confirmBox('Hapus data ini? Tindakan ini tercatat di audit dan tidak dapat dibatalkan.', 'Ya, hapus'))) return;
   await act(null, async () => { const r = await apiM(cfg.del, { id: rid }); toast(r.message, 'ok'); navigateTo(id); });
 }
-const BAG_KARY = ['Tambal Sulam', 'Proyek', 'Logistik & Armada'];
+const BAG_KARY = ['Tambal Sulam', 'Proyek'];
 function karSubMode() {
   const ts = ($('#f_Bagian') || {}).value === 'Tambal Sulam', el = $('#f_SubBagian'); if (!el) return;
   if (ts) { el.setAttribute('list', 'f_SubBagian_dl'); el.placeholder = 'Ketik untuk mencari, mis. Perairan'; }
@@ -953,13 +953,13 @@ function karSubMode() {
 
 crud({
   id: 'karyawan', title: 'Data karyawan', sub: 'Master pekerja lapangan. Hanya karyawan aktif yang muncul di presensi.', add: 'Tambah karyawan', noun: 'karyawan',
-  list: 'karyawan.list', save: 'karyawan.save', del: 'karyawan.delete', importType: 'karyawan',
+  list: 'karyawan.list', save: 'karyawan.save', del: 'karyawan.delete', importType: 'karyawan', headBtn: '<button class="btn-x btn-o" onclick="urutOpen()"><i class="bi bi-arrow-down-up"></i> Atur urutan</button>',
   prep: async () => ({ pil: await api('pilihan.list') }),
   cls: 'nostk tbl-slim tbl-kar',
-  cols: [{ l: 'Nama', f: r => `<b>${E(r.Nama)}</b><span class="sub">${E([r.Jabatan, r.Bagian, r.SubBagian].filter(Boolean).join(' \u00B7 '))}</span>` }, { l: 'Status', c: 'c-st', f: r => r.Status === 'Aktif' ? '<span class="dot-ok" title="Aktif" aria-label="Aktif"></span>' : badge(r.Status) }],
+  cols: [{ l: 'Nama', f: r => `<b>${E(r.Nama)}</b><span class="sub">${E([r.Jabatan, r.Bagian, r.SubBagian].filter(Boolean).join(' \u00B7 '))}</span>${BAG_KARY.indexOf(r.Bagian) < 0 ? '<span class="pill pill-warn" style="margin-top:2px">Bagian lama \u2014 ubah ke Tambal Sulam / Proyek</span>' : ''}` }, { l: 'Status', c: 'c-st', f: r => r.Status === 'Aktif' ? '<span class="dot-ok" title="Aktif" aria-label="Aktif"></span>' : badge(r.Status) }],
   fields: (ctx, row) => {
     const jb = ctx.pil.jabatan.slice(); if (row && row.Jabatan && jb.indexOf(row.Jabatan) < 0) jb.push(row.Jabatan);
-    return [{ k: 'Nama', l: 'Nama lengkap', req: true, full: true, ml: 80 }, { k: 'Bagian', l: 'Bagian', t: 'select', opts: BAG_KARY, req: true }, { k: 'Status', l: 'Status', t: 'select', opts: ['Aktif', 'Nonaktif'] },
+    return [{ k: 'Nama', l: 'Nama lengkap', req: true, full: true, ml: 80 }, { k: 'Bagian', l: 'Bagian', t: 'select', blank: 'Pilih bagian\u2026', opts: BAG_KARY, req: true }, { k: 'Status', l: 'Status', t: 'select', opts: ['Aktif', 'Nonaktif'] },
       { k: 'SubBagian', l: 'Sub-bagian / lokasi kerja', list: ctx.pil.subTS, help: ' ' }, { k: 'Jabatan', l: 'Jabatan', t: 'select', blank: 'Pilih jabatan\u2026', opts: jb }];
   },
   afterOpen: () => { const b = $('#f_Bagian'); if (b) { b.addEventListener('change', karSubMode); karSubMode(); } },
@@ -1835,7 +1835,7 @@ const IMP = {
   },
   karyawan: {
     judul: 'Data Karyawan', page: 'karyawan',
-    kolom: [['nama', 'Nama', 'WAJIB'], ['bagian', 'Bagian', 'WAJIB \u00B7 Tambal Sulam / Proyek / Logistik & Armada'], ['lokasi', 'Sub-bagian', 'boleh kosong \u00B7 TS: dari daftar resmi'], ['jabatan', 'Jabatan', 'boleh kosong \u00B7 Mandor / Kepala Tukang / Tukang / Kuli'], ['status', 'Status', 'boleh kosong \u00B7 Aktif / Nonaktif']],
+    kolom: [['nama', 'Nama', 'WAJIB'], ['bagian', 'Bagian', 'WAJIB \u00B7 Tambal Sulam / Proyek'], ['lokasi', 'Sub-bagian', 'boleh kosong \u00B7 TS: dari daftar resmi'], ['jabatan', 'Jabatan', 'boleh kosong \u00B7 Mandor / Kepala Tukang / Tukang / Kuli'], ['status', 'Status', 'boleh kosong \u00B7 Aktif / Nonaktif']],
     contoh: [['Ahmad Fauzi', 'Tambal Sulam', 'Perairan', 'Tukang', 'Aktif'], ['Slamet Riyadi', 'Proyek', 'Gedung Serbaguna', 'Kuli', '']],
     alias: { nama: ['nama', 'namalengkap', 'namakaryawan', 'namapekerja'], bagian: ['bagian'], lokasi: ['subbagian', 'lokasi', 'sublokasi'], jabatan: ['jabatan', 'posisi'], status: ['status'] }
   }
@@ -1941,4 +1941,60 @@ async function impTemplate() {
     const csv = '\uFEFF' + data.map(r => r.map(c => /[;"\n]/.test(c) ? '"' + c.replace(/"/g, '""') + '"' : c).join(';')).join('\r\n');
     const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv' })); a.download = nama + '.csv'; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 2000);
   }
+}
+
+function urutGroups() {
+  const rows = ((S.karyawan && S.karyawan.rows) || []).filter(k => k.Status === 'Aktif' && BAG_KARY.indexOf(k.Bagian) >= 0);
+  const g = [], idx = {};
+  rows.forEach(k => { const key = k.Bagian + '|' + (k.SubBagian || ''); if (!(key in idx)) { idx[key] = g.length; g.push({ key: key, bagian: k.Bagian, sub: k.SubBagian || '', rows: [] }); } g[idx[key]].rows.push(k); });
+  return g;
+}
+function urutOpen(key) {
+  const g = urutGroups();
+  if (!g.length) return toast('Belum ada karyawan aktif.', '');
+  const cur = g.find(x => x.key === key) || g[0];
+  S.urut = { key: cur.key, reset: false };
+  openModal({
+    title: 'Atur urutan karyawan', size: 'lg',
+    body: `<label class="lbl" for="urG">Sub-bagian</label><select class="inp mb2" id="urG" onchange="urutOpen(this.value)">${g.map(x => `<option value="${E(x.key)}"${x.key === cur.key ? ' selected' : ''}>${E(x.bagian + ' \u00B7 ' + (x.sub || '(Tanpa sub-bagian)'))} (${x.rows.length})</option>`).join('')}</select>
+      <p class="help" style="margin:0 0 .5rem">Seret <b>\u22EE\u22EE</b> atau pakai tombol \u25B2\u25BC untuk memindah posisi. Urutan ini dipakai di Data Karyawan dan Presensi.</p>
+      <ol class="ur-list" id="urList">${cur.rows.map(k => `<li class="ur-item" data-id="${E(k.ID)}"><span class="ur-h" onpointerdown="urutDrag(event,this.closest('li'))" title="Seret untuk memindah" aria-hidden="true">\u22EE\u22EE</span><span class="ur-no"></span><span class="ur-nm"><b>${E(k.Nama)}</b><small>${E(k.Jabatan || '\u2013')}</small></span><span class="ur-btn"><button type="button" class="btn-x btn-o btn-sm" onclick="urutMove(this,-1)" aria-label="Naikkan ${E(k.Nama)}">\u25B2</button><button type="button" class="btn-x btn-o btn-sm" onclick="urutMove(this,1)" aria-label="Turunkan ${E(k.Nama)}">\u25BC</button></span></li>`).join('')}</ol>`,
+    footer: `<button class="btn-x btn-o" onclick="urutJabatan()"><i class="bi bi-sort-down"></i> Kembalikan ke urutan jabatan</button><button class="btn-x btn-o" data-bs-dismiss="modal">Batal</button><button class="btn-x btn-p" onclick="urutSave(this)"><i class="bi bi-check2"></i> Simpan urutan</button>`
+  });
+  urutNum();
+}
+function urutNum() { $$('#urList .ur-item').forEach((li, i) => { li.querySelector('.ur-no').textContent = (i + 1) + '.'; }); }
+function urutMove(btn, d) {
+  const li = btn.closest('li'), box = li.parentElement;
+  if (d < 0 && li.previousElementSibling) box.insertBefore(li, li.previousElementSibling);
+  if (d > 0 && li.nextElementSibling) box.insertBefore(li.nextElementSibling, li);
+  S.urut.reset = false; urutNum(); btn.focus();
+  li.classList.add('ur-moved'); setTimeout(() => li.classList.remove('ur-moved'), 350);
+}
+function urutDrag(e, li) {
+  if (!li) return;
+  e.preventDefault();
+  const box = li.parentElement; li.classList.add('ur-drag');
+  try { e.target.setPointerCapture(e.pointerId); } catch (x) { }
+  const move = ev => {
+    const y = ev.clientY; let before = null;
+    for (const sb of [...box.children]) { if (sb === li) continue; const r = sb.getBoundingClientRect(); if (y < r.top + r.height / 2) { before = sb; break; } }
+    if (before !== li.nextElementSibling) { box.insertBefore(li, before); urutNum(); }
+    const bx = box.closest('.modal-body'); if (bx) { const r = bx.getBoundingClientRect(); if (y < r.top + 40) bx.scrollTop -= 12; else if (y > r.bottom - 40) bx.scrollTop += 12; }
+  };
+  const up = () => { li.classList.remove('ur-drag'); window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); window.removeEventListener('pointercancel', up); S.urut.reset = false; urutNum(); };
+  window.addEventListener('pointermove', move); window.addEventListener('pointerup', up); window.addEventListener('pointercancel', up);
+}
+function urutJabatan() {
+  const J = ['Mandor', 'Kepala Tukang', 'Tukang', 'Kuli'], box = $('#urList');
+  const rk = li => { const r = (S.karyawan.rows || []).find(k => k.ID === li.dataset.id) || {}; const i = J.indexOf(r.Jabatan); return [i >= 0 ? i : 9, String(r.Nama || '')]; };
+  [...box.children].sort((a, b) => { const x = rk(a), y = rk(b); return x[0] - y[0] || x[1].localeCompare(y[1]); }).forEach(li => box.appendChild(li));
+  S.urut.reset = true; urutNum(); toast('Urutan dikembalikan sesuai jabatan. Klik Simpan untuk menerapkan.', '');
+}
+async function urutSave(btn) {
+  const ids = $$('#urList .ur-item').map(li => li.dataset.id);
+  return act(btn, async () => {
+    const r = await apiM('karyawan.order', { ids: ids, reset: !!S.urut.reset });
+    toast(r.message, 'ok'); closeModal(); navigateTo('karyawan', { force: true });
+  });
 }
