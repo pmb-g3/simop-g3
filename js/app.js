@@ -99,12 +99,12 @@ function apiM(action, payload, quiet, o) {
         const js = JSON.stringify(res.data === undefined ? null : res.data), old = DC.mem[key];
         if (!old || JSON.stringify(old.d) !== js) DC.changed = true;
         DC.mem[key] = { t: Date.now(), d: JSON.parse(js) }; dcSave();
-      } else if (action !== 'file.get') { AppState.lastWrite = Date.now(); AppState.optRow = null; }
+      } else if (action !== 'file.get' && action !== 'import.check') { AppState.lastWrite = Date.now(); AppState.optRow = null; }
       return { data: res.data, message: res.message };
     }
     if (optRow) optRow.classList.remove('opt-out');
     if (res && res.code === 'AUTH') { forceLogout(res.message); throw new Error(res.message); }
-    if (!rd && action !== 'file.get' && res && res.success === false) AppState.needNet = true;
+    if (!rd && action !== 'file.get' && action !== 'import.check' && res && res.success === false) AppState.needNet = true;
     throw new Error((res && res.message) || 'Respons kosong dari server.');
   }, err => { if (!q) loader(-1); if (optRow) optRow.classList.remove('opt-out'); throw err; });
 }
@@ -822,7 +822,7 @@ function crud(cfg) {
 function crudHtml(cfg) {
   const st = S[cfg.id], canDel = !cfg.delRoles || cfg.delRoles.indexOf(role()) >= 0;
   const cols = cfg.cols.concat([{ l: '', f: r => `<div class="actions">${cfg.rowActions ? cfg.rowActions(r) : ''}<button class="btn-x btn-o btn-sm" onclick="crudEdit('${cfg.id}','${r.ID}')"><i class="bi bi-pencil"></i><span class="hide-m">Ubah</span></button>${canDel ? `<button class="btn-x btn-d btn-sm" onclick="crudDel('${cfg.id}','${r.ID}')" aria-label="Hapus"><i class="bi bi-trash"></i></button>` : ''}</div>` }]);
-  return `<div class="page-head"><div><h1>${E(cfg.title)}</h1><p>${E(cfg.sub)}</p></div><button class="btn-x btn-p" onclick="crudAdd('${cfg.id}')"><i class="bi bi-plus-lg"></i> ${E(cfg.add)}</button></div>
+  return `<div class="page-head"><div><h1>${E(cfg.title)}</h1><p>${E(cfg.sub)}</p></div><div class="row-f gap1 wrap">${cfg.importType ? `<button class="btn-x btn-o" onclick="importOpen('${cfg.importType}')"><i class="bi bi-file-earmark-spreadsheet"></i> Impor Excel</button>` : ''}<button class="btn-x btn-p" onclick="crudAdd('${cfg.id}')"><i class="bi bi-plus-lg"></i> ${E(cfg.add)}</button></div></div>
   ${cfg.header ? cfg.header(st) : ''}
   <section class="card-x"><div class="tools">${searchBox('q_' + cfg.id, 'tb_' + cfg.id, 'Cari\u2026')}</div>${tableHtml('tb_' + cfg.id, cols, st.rows, { cls: cfg.cls || '', empty: cfg.empty || 'Belum ada data', emptySub: cfg.emptySub || 'Klik "' + cfg.add + '" untuk menambah.' })}</section>`;
 }
@@ -851,7 +851,7 @@ function karSubMode() {
 
 crud({
   id: 'karyawan', title: 'Data karyawan', sub: 'Master pekerja lapangan. Hanya karyawan aktif yang muncul di presensi.', add: 'Tambah karyawan', noun: 'karyawan',
-  list: 'karyawan.list', save: 'karyawan.save', del: 'karyawan.delete',
+  list: 'karyawan.list', save: 'karyawan.save', del: 'karyawan.delete', importType: 'karyawan',
   prep: async () => ({ pil: await api('pilihan.list') }),
   cls: 'nostk tbl-slim tbl-kar',
   cols: [{ l: 'Nama', f: r => `<b>${E(r.Nama)}</b><span class="sub">${E([r.Jabatan, r.Bagian, r.SubBagian].filter(Boolean).join(' \u00B7 '))}</span>` }, { l: 'Status', c: 'c-st', f: r => r.Status === 'Aktif' ? '<span class="dot-ok" title="Aktif" aria-label="Aktif"></span>' : badge(r.Status) }],
@@ -1045,7 +1045,7 @@ PAGES.program = async function () {
   const r = await api('program.list');
   S.prog = { rows: r.rows, sub: r.sub, minggu: r.minggu }; S.progKey = S.progKey || 'ini';
   return {
-    html: `<div class="page-head"><div><h1>Program kerja</h1><p>Rencana dan progres fisik tiap sub-bagian, dikelompokkan per bagian, lengkap dengan dokumentasi foto Sebelum \u00B7 Proses \u00B7 Selesai.</p></div><div class="row-f gap1 wrap"><button class="btn-x btn-o" onclick="subManage()"><i class="bi bi-diagram-3"></i> Kelola sub-bagian</button><button class="btn-x btn-p" onclick="programForm()"><i class="bi bi-plus-lg"></i> Tambah program</button></div></div>
+    html: `<div class="page-head"><div><h1>Program kerja</h1><p>Rencana dan progres fisik tiap sub-bagian, dikelompokkan per bagian, lengkap dengan dokumentasi foto Sebelum \u00B7 Proses \u00B7 Selesai.</p></div><div class="row-f gap1 wrap"><button class="btn-x btn-o" onclick="subManage()"><i class="bi bi-diagram-3"></i> Kelola sub-bagian</button><button class="btn-x btn-o" onclick="importOpen('program')"><i class="bi bi-file-earmark-spreadsheet"></i> Impor Excel</button><button class="btn-x btn-p" onclick="programForm()"><i class="bi bi-plus-lg"></i> Tambah program</button></div></div>
     <section class="card-x"><div class="tools">
       <div class="search"><i class="bi bi-search"></i><input class="inp" id="progQ" type="search" placeholder="Cari program, lokasi, mandor\u2026" aria-label="Cari program" oninput="paintPrograms()"></div>
       <select class="inp" id="progS" style="width:auto" onchange="paintPrograms()" aria-label="Filter status"><option value="">Semua status</option><option value="Direncanakan">Direncanakan</option><option value="Berjalan">Proses</option><option value="Selesai">Selesai</option></select>
@@ -1372,7 +1372,7 @@ function submitOrder(btn) {
 }
 function matKatalogHtml() {
   const s = S.mat, own = r => isStaff() || r.PemilikToko === AppState.user.username;
-  return `<div class="tools">${searchBox('q_kat', 'tb_kat', 'Cari item katalog\u2026')}<span class="grow"></span><button class="btn-x btn-p btn-sm" onclick="katForm()"><i class="bi bi-plus-lg"></i> Tambah item</button></div>` +
+  return `<div class="tools">${searchBox('q_kat', 'tb_kat', 'Cari item katalog\u2026')}<span class="grow"></span><button class="btn-x btn-o btn-sm" onclick="importOpen('katalog')"><i class="bi bi-file-earmark-spreadsheet"></i> Impor Excel</button><button class="btn-x btn-p btn-sm" onclick="katForm()"><i class="bi bi-plus-lg"></i> Tambah item</button></div>` +
     tableHtml('tb_kat', [
       { l: 'Material', f: r => `<b>${E(r.Material)}</b>` }, { l: 'Satuan', k: 'Satuan' }, { l: 'Harga', n: 1, f: r => `<b>${Rp(r.Harga)}</b>` }, { l: 'Pemilik toko', k: 'PemilikToko' }, { l: 'Diperbarui', f: r => fdt(r.UpdatedAt) },
       { l: '', f: r => own(r) ? `<div class="actions"><button class="btn-x btn-o btn-sm" onclick="katForm('${r.ID}')"><i class="bi bi-pencil"></i><span class="hide-m">Ubah</span></button><button class="btn-x btn-d btn-sm" onclick="katDel('${r.ID}')" aria-label="Hapus"><i class="bi bi-trash"></i></button></div>` : '' }
@@ -1655,3 +1655,121 @@ function stackTables(root) {
 document.addEventListener('pointerdown', e => { AppState.lastTap = e.target; AppState.lastAct = Date.now(); }, true);
 document.addEventListener('keydown', () => { AppState.lastAct = Date.now(); }, true);
 ['input', 'change', 'click'].forEach(ev => document.addEventListener(ev, e => { const c = document.getElementById('app-container'); if (c && c.contains(e.target)) AppState.uiDirty = true; }, true));
+
+const IMP = {
+  program: {
+    judul: 'Program Kerja', page: 'program',
+    kolom: [['bagian', 'Bagian', 'WAJIB \u00B7 Tambal Sulam / Proyek'], ['lokasi', 'Sub-bagian / Lokasi', 'boleh kosong \u00B7 TS: sub-bagian resmi, Proyek: bebas'], ['nama', 'Nama Program', 'WAJIB'], ['pekerja', 'Nama Pekerja', 'boleh kosong \u00B7 mis. Pak Joko CS (3 orang)'], ['status', 'Status', 'boleh kosong \u00B7 Direncanakan / Proses / Selesai']],
+    contoh: [['Tambal Sulam', 'Perairan', 'Perbaikan pipa bocor asrama', 'Pak Joko CS (3 orang)', 'Proses'], ['Proyek', 'Gedung Serbaguna', 'Pemasangan kusen jendela', '', 'Direncanakan']],
+    alias: { bagian: ['bagian'], lokasi: ['subbagian', 'lokasi', 'subbagianlokasi', 'sublokasi'], nama: ['namaprogram', 'program', 'uraian', 'programkerja'], pekerja: ['namapekerja', 'pekerja', 'jumlahpekerja', 'penanggungjawab', 'mandor'], status: ['status'] }
+  },
+  katalog: {
+    judul: 'Katalog Toko', page: 'material',
+    kolom: [['nama', 'Nama Barang', 'WAJIB'], ['satuan', 'Satuan', 'boleh kosong \u00B7 mis. Sak, Batang, Kg'], ['harga', 'Harga', 'boleh kosong \u00B7 mis. 62000 atau Rp 62.000'], ['pemilik', 'Pemilik Toko', 'boleh kosong \u00B7 otomatis tokokuk']],
+    contoh: [['Semen Gresik 50 Kg', 'Sak', '62000', 'tokokuk'], ['Besi Beton 10mm', 'Batang', '82000', '']],
+    alias: { nama: ['namabarang', 'barang', 'material', 'namamaterial', 'item'], satuan: ['satuan', 'unit'], harga: ['harga', 'hargasatuan', 'price'], pemilik: ['pemiliktoko', 'pemilik', 'toko'] }
+  },
+  karyawan: {
+    judul: 'Data Karyawan', page: 'karyawan',
+    kolom: [['nama', 'Nama', 'WAJIB'], ['bagian', 'Bagian', 'WAJIB \u00B7 Tambal Sulam / Proyek / Logistik & Armada'], ['lokasi', 'Sub-bagian', 'boleh kosong \u00B7 TS: dari daftar resmi'], ['jabatan', 'Jabatan', 'boleh kosong \u00B7 Mandor / Kepala Tukang / Tukang / Kuli'], ['status', 'Status', 'boleh kosong \u00B7 Aktif / Nonaktif']],
+    contoh: [['Ahmad Fauzi', 'Tambal Sulam', 'Perairan', 'Tukang', 'Aktif'], ['Slamet Riyadi', 'Proyek', 'Gedung Serbaguna', 'Kuli', '']],
+    alias: { nama: ['nama', 'namalengkap', 'namakaryawan', 'namapekerja'], bagian: ['bagian'], lokasi: ['subbagian', 'lokasi', 'sublokasi'], jabatan: ['jabatan', 'posisi'], status: ['status'] }
+  }
+};
+const impKey = v => String(v || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+function impParse(text) {
+  const t = String(text || '').replace(/^\uFEFF/, '');
+  const sep = t.indexOf('\t') >= 0 ? '\t' : (t.split('\n')[0].split(';').length > t.split('\n')[0].split(',').length ? ';' : ',');
+  const rows = []; let row = [], cell = '', q = false;
+  for (let i = 0; i < t.length; i++) {
+    const ch = t[i];
+    if (q) { if (ch === '"') { if (t[i + 1] === '"') { cell += '"'; i++; } else q = false; } else cell += ch; }
+    else if (ch === '"' && cell === '') q = true;
+    else if (ch === sep) { row.push(cell); cell = ''; }
+    else if (ch === '\n' || ch === '\r') { if (ch === '\r' && t[i + 1] === '\n') i++; row.push(cell); rows.push(row); row = []; cell = ''; }
+    else cell += ch;
+  }
+  if (cell !== '' || row.length) { row.push(cell); rows.push(row); }
+  return rows.filter(r => r.some(c => String(c).trim() !== ''));
+}
+function impMap(type, grid) {
+  const sp = IMP[type]; if (!grid.length) return { rows: [], header: false };
+  const first = grid[0].map(impKey), idx = {};
+  Object.keys(sp.alias).forEach(k => { const j = first.findIndex(h => sp.alias[k].indexOf(h) >= 0); if (j >= 0) idx[k] = j; });
+  const header = Object.keys(idx).length >= 2;
+  const body = header ? grid.slice(1) : grid;
+  const rows = body.map(r => { const o = {}; sp.kolom.forEach((c, n) => { const j = header ? idx[c[0]] : n; o[c[0]] = j === undefined ? '' : String(r[j] === undefined ? '' : r[j]).trim(); }); return o; });
+  return { rows: rows, header: header };
+}
+function importOpen(type) {
+  const sp = IMP[type]; S.imp = { type: type, rows: [], res: null };
+  openModal({
+    title: 'Impor ' + sp.judul + ' dari Excel', size: 'xl',
+    body: `<div class="imp-cols"><b>Urutan kolom</b> <span class="muted">(baris judul boleh ikut disalin \u00B7 kolom "boleh kosong" bisa dilengkapi nanti lewat aplikasi)</span><div class="imp-chips">${sp.kolom.map((c, i) => `<span class="imp-chip"><em>${i + 1}</em>${E(c[1])}<small>${E(c[2])}</small></span>`).join('')}</div></div>
+      <div class="row-f gap1 wrap mb2"><button type="button" class="btn-x btn-o btn-sm" onclick="impTemplate()"><i class="bi bi-download"></i> Unduh template Excel</button><label class="btn-x btn-o btn-sm" style="cursor:pointer"><i class="bi bi-folder2-open"></i> Pilih file Excel / CSV<input type="file" id="impFile" accept=".xlsx,.xls,.csv,.txt" hidden onchange="impFile(this)"></label></div>
+      <label class="lbl" for="impText">Atau tempel langsung dari Excel</label>
+      <textarea class="inp" id="impText" rows="4" placeholder="Di Excel: blok tabelnya \u2192 Ctrl+C. Lalu klik di sini \u2192 Ctrl+V" oninput="impQueue()"></textarea>
+      <div id="impPrev" class="mt2"></div>`,
+    footer: `<button class="btn-x btn-o" data-bs-dismiss="modal">Batal</button><button class="btn-x btn-p" id="impGo" disabled onclick="impSave(this)"><i class="bi bi-cloud-upload"></i> Simpan</button>`
+  });
+}
+let impTimer = null;
+function impQueue() { clearTimeout(impTimer); impTimer = setTimeout(() => impCheck(impParse($('#impText').value)), 450); }
+async function impCheck(grid) {
+  const sp = IMP[S.imp.type], m = impMap(S.imp.type, grid), box = $('#impPrev'); if (!box) return;
+  S.imp.rows = m.rows; S.imp.res = null; $('#impGo').disabled = true;
+  if (!m.rows.length) { box.innerHTML = ''; return; }
+  if (m.rows.length > 500) { box.innerHTML = `<div class="err-box">Terlalu banyak: ${m.rows.length} baris. Maksimal 500 baris sekali impor.</div>`; return; }
+  box.innerHTML = `<div class="muted"><span class="spin-sm"></span> Memeriksa ${m.rows.length} baris\u2026</div>`;
+  try {
+    const r = await apiM('import.check', { type: S.imp.type, rows: m.rows }, true);
+    if (!$('#impPrev') || S.imp.rows !== m.rows) return;
+    S.imp.res = r.data; impRender(m.header);
+  } catch (e) { if ($('#impPrev')) box.innerHTML = `<div class="err-box">${E(e.message)}</div>`; }
+}
+function impRender(header) {
+  const sp = IMP[S.imp.type], d = S.imp.res, sm = d.sum, onlyErr = $('#impOnlyErr') && $('#impOnlyErr').checked;
+  const okN = sm.baru + sm.perbarui;
+  const pill = st => ({ baru: '<span class="pill pill-ok">Baru</span>', perbarui: '<span class="pill pill-brand">Diperbarui</span>', sama: '<span class="pill pill-muted">Sudah ada</span>', error: '<span class="pill pill-bad">Bermasalah</span>' })[st];
+  const rows = d.items.filter(r => !onlyErr || r.status === 'error');
+  $('#impPrev').innerHTML = `<div class="imp-sum">${sm.baru ? `<span class="pill pill-ok">${sm.baru} baru</span>` : ''}${sm.perbarui ? `<span class="pill pill-brand">${sm.perbarui} diperbarui</span>` : ''}${sm.sama ? `<span class="pill pill-muted">${sm.sama} sudah ada (dilewati)</span>` : ''}${sm.error ? `<span class="pill pill-bad">${sm.error} bermasalah (dilewati)</span>` : ''}<span class="muted">dari ${sm.total} baris${header ? ' \u00B7 baris judul terdeteksi' : ''}</span>${sm.error ? `<label class="row-f gap1" style="margin-left:auto;cursor:pointer;font-size:13px"><input type="checkbox" class="check" id="impOnlyErr" ${onlyErr ? 'checked' : ''} onchange="impRender(${header})"> Hanya yang bermasalah</label>` : ''}</div>
+    <div class="tbl-wrap imp-tbl"><table class="tbl tbl-slim nostk"><thead><tr><th>#</th><th>Hasil pemeriksaan</th>${sp.kolom.map(c => `<th>${E(c[1])}</th>`).join('')}</tr></thead><tbody>${rows.map(r => {
+      const src = S.imp.rows[r.no - 1];
+      return `<tr class="imp-${r.status}"><td class="muted">${r.no}</td><td class="imp-res">${pill(r.status)}${r.pesan.map(x => `<span class="sub imp-err">${E(x)}</span>`).join('')}${r.catatan.map(x => `<span class="sub">${E(x)}</span>`).join('')}</td>${sp.kolom.map(c => `<td>${E(src[c[0]] || '')}</td>`).join('')}</tr>`;
+    }).join('')}</tbody></table></div>`;
+  const go = $('#impGo'); go.disabled = !okN;
+  go.innerHTML = `<i class="bi bi-cloud-upload"></i> ${okN ? 'Simpan ' + okN + ' baris' : 'Tidak ada baris valid'}`;
+}
+async function impSave(btn) {
+  const sp = IMP[S.imp.type];
+  return act(btn, async () => {
+    const r = await apiM('import.save', { type: S.imp.type, rows: S.imp.rows });
+    toast(r.message, 'ok'); closeModal();
+    if (AppState.page === sp.page) navigateTo(sp.page, { force: true });
+  });
+}
+function impLoadXLSX() {
+  if (window.XLSX) return Promise.resolve(window.XLSX);
+  return new Promise((res, rej) => { const sc = document.createElement('script'); sc.src = 'https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js'; sc.onload = () => res(window.XLSX); sc.onerror = () => rej(new Error('Gagal memuat pembaca Excel. Periksa internet, atau simpan file sebagai CSV.')); document.head.appendChild(sc); });
+}
+async function impFile(inp) {
+  const f = inp.files && inp.files[0]; if (!f) return;
+  try {
+    let grid;
+    if (/\.(csv|txt)$/i.test(f.name)) grid = impParse(await f.text());
+    else { const X = await impLoadXLSX(); const wb = X.read(await f.arrayBuffer(), { type: 'array' }); grid = X.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { header: 1, raw: false, defval: '' }).filter(r => r.some(c => String(c).trim() !== '')); }
+    $('#impText').value = ''; impCheck(grid);
+  } catch (e) { toast(e.message, 'err'); }
+  inp.value = '';
+}
+async function impTemplate() {
+  const sp = IMP[S.imp.type], head = sp.kolom.map(c => c[1]), data = [head], nama = 'Template Impor ' + sp.judul;
+  try {
+    const X = await impLoadXLSX(); const ws = X.utils.aoa_to_sheet(data); ws['!cols'] = sp.kolom.map(() => ({ wch: 26 }));
+    const ex = X.utils.aoa_to_sheet([['Contoh pengisian (jangan disalin ke lembar Data)'], head].concat(sp.contoh)); ex['!cols'] = sp.kolom.map(() => ({ wch: 26 }));
+    const wb = X.utils.book_new(); X.utils.book_append_sheet(wb, ws, 'Data'); X.utils.book_append_sheet(wb, ex, 'Contoh'); X.writeFile(wb, nama + '.xlsx');
+  } catch (e) {
+    const csv = '\uFEFF' + data.map(r => r.map(c => /[;"\n]/.test(c) ? '"' + c.replace(/"/g, '""') + '"' : c).join(';')).join('\r\n');
+    const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv' })); a.download = nama + '.csv'; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+  }
+}
