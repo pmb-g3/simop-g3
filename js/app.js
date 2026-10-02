@@ -44,14 +44,62 @@ function toast(msg, type) {
   $('#toasts').appendChild(el);
   setTimeout(() => el.remove(), type === 'err' ? 6500 : 3600);
 }
+const READ_ACT = new Set(['dash.get', 'karyawan.list', 'absensi.get', 'rekap.absensi', 'rekap.bayar', 'rekap.list', 'izin.list', 'sub.list', 'program.list', 'katalog.list', 'material.list', 'piket.list', 'piket.staff', 'keu.list', 'armada.list', 'admin.users', 'admin.audit', 'admin.config', 'pilihan.list', 'minggu.info', 'mat.rekap']);
+const DC = { mem: {}, mode: 'net', changed: false, bg: false, user: '' };
+const DC_MISS = new Error('cache-miss');
+const dcKey = (a, p) => a + '|' + JSON.stringify(p || {});
+function dcStore() { try { return localStorage.getItem('simop-rt') ? localStorage : sessionStorage; } catch (e) { return sessionStorage; } }
+const clone = o => (o === undefined ? o : JSON.parse(JSON.stringify(o)));
+function dcLoad() {
+  DC.user = AppState.user ? AppState.user.username + ':' + AppState.user.role : '';
+  try { DC.mem = JSON.parse(dcStore().getItem('simop-dc:' + DC.user) || '{}') || {}; } catch (e) { DC.mem = {}; }
+}
+let dcTimer = null;
+function dcSave() {
+  clearTimeout(dcTimer);
+  dcTimer = setTimeout(() => {
+    if (!DC.user) return;
+    for (let tries = 0; tries < 6; tries++) {
+      try { dcStore().setItem('simop-dc:' + DC.user, JSON.stringify(DC.mem)); return; }
+      catch (e) {
+        const ks = Object.keys(DC.mem).sort((a, b) => DC.mem[a].t - DC.mem[b].t);
+        if (!ks.length) return;
+        ks.slice(0, Math.ceil(ks.length / 2)).forEach(k => delete DC.mem[k]);
+      }
+    }
+  }, 300);
+}
+function dcClear() {
+  DC.mem = {};
+  [localStorage, sessionStorage].forEach(st => { try { Object.keys(st).filter(k => k.indexOf('simop-dc:') === 0).forEach(k => st.removeItem(k)); } catch (e) { } });
+}
+function dcPatch(action, payload, fn) { const h = DC.mem[dcKey(action, payload)]; if (h) { try { fn(h.d); dcSave(); } catch (e) { } } }
 function apiM(action, payload, quiet) {
-  if (!quiet) loader(1);
+  const rd = READ_ACT.has(action), key = rd ? dcKey(action, payload) : '';
+  if (rd && DC.mode === 'only') {
+    const h = DC.mem[key];
+    if (h) DC.oldest = Math.max(DC.oldest || 0, Date.now() - h.t);
+    return h ? Promise.resolve({ data: clone(h.d), message: 'OK', cached: true }) : Promise.reject(DC_MISS);
+  }
+  const q = quiet || DC.bg;
+  if (!q) loader(1);
+  const optRow = !rd && /delete|Delete|\.del$/.test(action) && Date.now() - (AppState.optAt || 0) < 20000 ? AppState.optRow : null;
+  if (optRow) AppState.optRow = null;
+  if (optRow) optRow.classList.add('opt-out');
   return gasPost('api', [AppState.token, action, payload || {}]).then(res => {
-    if (!quiet) loader(-1);
-    if (res && res.success) return { data: res.data, message: res.message };
+    if (!q) loader(-1);
+    if (res && res.success) {
+      if (rd) {
+        const js = JSON.stringify(res.data === undefined ? null : res.data), old = DC.mem[key];
+        if (!old || JSON.stringify(old.d) !== js) DC.changed = true;
+        DC.mem[key] = { t: Date.now(), d: JSON.parse(js) }; dcSave();
+      } else if (action !== 'file.get') { AppState.lastWrite = Date.now(); AppState.optRow = null; }
+      return { data: res.data, message: res.message };
+    }
+    if (optRow) optRow.classList.remove('opt-out');
     if (res && res.code === 'AUTH') { forceLogout(res.message); throw new Error(res.message); }
     throw new Error((res && res.message) || 'Respons kosong dari server.');
-  }, err => { if (!quiet) loader(-1); throw err; });
+  }, err => { if (!q) loader(-1); if (optRow) optRow.classList.remove('opt-out'); throw err; });
 }
 const api = (a, p, q) => apiM(a, p, q).then(r => r.data);
 async function act(btn, fn) {
@@ -72,6 +120,9 @@ function openModal(o) {
 const closeModal = () => bsModal('appModal').hide();
 $('#appModal').addEventListener('shown.bs.modal', () => { const f = $('#appModalBody input:not([type=hidden]),#appModalBody select,#appModalBody textarea'); if (f && window.matchMedia('(pointer:fine)').matches) f.focus(); });
 function confirmBox(msg, label) {
+  const t = AppState.lastTap;
+  AppState.optRow = t && t.closest ? t.closest('tr, .li, .prog, .pk-row, .day-item, .kar-row') : null;
+  AppState.optAt = Date.now();
   return new Promise(res => {
     const el = $('#confirmModal'), ok = $('#confirmOk'), m = bsModal('confirmModal');
     let done = false;
@@ -243,19 +294,63 @@ function setActiveNav(id) {
   $$('[data-nav]').forEach(b => b.classList.toggle('active', b.dataset.nav === id));
   const it = AppState.menu.find(x => x.id === id); $('#pageTitle').textContent = it ? it.label : 'SIMOP';
 }
+function uiBusy() {
+  return AppState.uiDirty || document.body.classList.contains('modal-open') || document.body.classList.contains('drawer-open') ||
+    (AppState.page === 'presensi' && S.pres && S.pres.changed && Object.keys(S.pres.changed).length > 0);
+}
 async function navigateTo(id, opts) {
   if (!AppState.token) return showLogin();
   if (!AppState.menu.some(m => m.id === id)) id = 'dashboard';
-  const seq = ++AppState.seq, c = $('#app-container');
+  opts = opts || {};
+  const same = AppState.page === id, seq = ++AppState.seq, c = $('#app-container');
+  const afterWrite = Date.now() - (AppState.lastWrite || 0) < 4000;
+  const keep = !!opts.force || (same && afterWrite);
   AppState.page = id; setActiveNav(id); closeDrawer();
-  c.innerHTML = skeleton();
-  try {
-    const r = await PAGES[id](opts || {});
-    if (seq !== AppState.seq) return;
+  const paint = (r, keepScroll) => {
+    const y = window.scrollY;
     c.innerHTML = typeof r === 'string' ? r : r.html;
     if (r && r.init) r.init(c);
-    window.scrollTo(0, 0);
-  } catch (e) { if (seq === AppState.seq && AppState.token) c.innerHTML = errBox(e.message); }
+    AppState.uiDirty = false;
+    window.scrollTo(0, keepScroll ? y : 0);
+  };
+  let shown = false;
+  if (!keep && !afterWrite) {
+    DC.mode = 'only'; DC.oldest = 0;
+    let r = null;
+    try { r = await PAGES[id](opts); } catch (e) { r = null; } finally { DC.mode = 'net'; }
+    if (r && seq === AppState.seq) { paint(r, false); shown = true; }
+  }
+  if (shown && DC.oldest < 4000) return;
+  if (!shown && !keep) c.innerHTML = skeleton();
+  const snap = Object.assign({}, S);
+  DC.changed = false;
+  try {
+    const r = await PAGES[id](opts);
+    if (seq !== AppState.seq) return;
+    if (!shown) paint(r, keep);
+    else if (DC.changed && !uiBusy()) paint(r, true);
+    else Object.keys(S).forEach(k => { if (S[k] !== snap[k]) { if (k in snap) S[k] = snap[k]; else delete S[k]; } });
+  } catch (e) {
+    if (seq === AppState.seq && AppState.token && !shown) c.innerHTML = errBox(e.message);
+  }
+}
+const PREFETCH_ORDER = ['presensi', 'material', 'program', 'pembayaran', 'rekapmat', 'karyawan', 'izin', 'rekap', 'piket', 'armada', 'keuangan', 'dashboard', 'akun'];
+async function prefetchMenus() {
+  const have = AppState.menu.map(m => m.id).filter(id => PAGES[id]);
+  const ids = PREFETCH_ORDER.filter(id => have.indexOf(id) >= 0).concat(have.filter(id => PREFETCH_ORDER.indexOf(id) < 0));
+  if (have.indexOf('presensi') >= 0 && AppState.page !== 'presensi') { DC.bg = true; try { await api('absensi.get', { tanggal: todayStr() }); } catch (e) { } finally { DC.bg = false; } }
+  for (const id of ids) {
+    if (!AppState.token || id === AppState.page || id === 'presensi') continue;
+    if (Date.now() - (AppState.lastWrite || 0) < 4000) await new Promise(r => setTimeout(r, 1500));
+    const seq0 = AppState.seq, snap = Object.assign({}, S), exp = S.expRange ? Object.assign({}, S.expRange) : null;
+    DC.bg = true;
+    try { await PAGES[id]({}); } catch (e) { } finally { DC.bg = false; }
+    if (AppState.page !== id) {
+      if (AppState.seq === seq0) Object.keys(S).forEach(k => { if (S[k] !== snap[k]) { if (k in snap) S[k] = snap[k]; else delete S[k]; } });
+      if (exp) S.expRange = exp; else delete S.expRange;
+    }
+    await new Promise(r => setTimeout(r, 60));
+  }
 }
 
 function showLogin(msg) {
@@ -289,6 +384,8 @@ const TK_LOCAL = 'simop-rt', TK_SESSION = 'simop-st';
 function saveToken(t, remember) {
   try { if (remember) localStorage.setItem(TK_LOCAL, t); else sessionStorage.setItem(TK_SESSION, t); } catch (e) { }
 }
+function saveSessInfo(d) { try { dcStore().setItem('simop-ss', JSON.stringify({ user: d.user, menu: d.menu, config: d.config })); } catch (e) { } }
+function readSessInfo() { try { return JSON.parse(dcStore().getItem('simop-ss') || 'null'); } catch (e) { return null; } }
 function readToken() {
   try { return localStorage.getItem(TK_LOCAL) || sessionStorage.getItem(TK_SESSION) || ''; } catch (e) { return ''; }
 }
@@ -301,7 +398,10 @@ function bootHtml() {
 }
 function applySession(d) {
   AppState.token = d.token; AppState.user = d.user; AppState.menu = d.menu; AppState.config = d.config;
-  document.body.classList.remove('auth-mode'); renderShell(); navigateTo('dashboard');
+  saveSessInfo(d); dcLoad();
+  if (d.boot) { Object.keys(d.boot).forEach(k => { DC.mem[k] = { t: Date.now(), d: d.boot[k] }; }); dcSave(); }
+  document.body.classList.remove('auth-mode'); renderShell();
+  navigateTo('dashboard').then(() => setTimeout(() => { prefetchMenus().catch(() => { }); }, 700));
 }
 function storeBrowserPassword(u, p) {
   try { if (window.PasswordCredential && navigator.credentials) navigator.credentials.store(new PasswordCredential({ id: u, password: p, name: u })).catch(() => { }); } catch (e) { }
@@ -320,7 +420,7 @@ function doLoginUI(btn) {
     }, e => { loader(-1); btn.classList.remove('busy'); err.className = 'err-box'; err.textContent = e.message || 'Koneksi gagal. Periksa jaringan lalu coba lagi.'; });
 }
 function resetState() {
-  clearToken(); AppState.token = null; AppState.user = null; AppState.menu = []; AppState.img = {}; Object.keys(S).forEach(k => delete S[k]); }
+  clearToken(); dcClear(); DC.user = ''; [localStorage, sessionStorage].forEach(st => { try { st.removeItem('simop-ss'); } catch (e) { } }); AppState.token = null; AppState.user = null; AppState.menu = []; AppState.img = {}; Object.keys(S).forEach(k => delete S[k]); }
 function forceLogout(msg) { if (!AppState.token) return; resetState(); showLogin(msg || 'Sesi berakhir. Silakan masuk kembali.'); }
 function logout() {
   const t = AppState.token; resetState(); showLogin();
@@ -576,10 +676,16 @@ async function presGoto(t) {
   navigateTo('presensi', { tgl: t });
 }
 async function savePres() {
-  const ent = S.pres.rows.filter(r => S.pres.changed[r.id]).map(r => ({ kid: r.id, pagi: r.pagi, siang: r.siang }));
+  const P = S.pres, ent = P.rows.filter(r => P.changed[r.id]).map(r => ({ kid: r.id, pagi: r.pagi, siang: r.siang }));
   if (!ent.length) return;
-  const r = await apiM('absensi.save', { tanggal: S.pres.tgl, entries: ent });
-  S.pres.changed = {}; presSummary(); toast(r.message, 'ok');
+  const was = P.changed, tgl = P.tgl;
+  P.changed = {}; presSummary();
+  toast('Presensi ' + ent.length + ' pekerja disimpan.', 'ok');
+  dcPatch('absensi.get', { tanggal: tgl }, d => { ent.forEach(e => { const r = d.rows.find(x => x.id === e.kid); if (r) { r.pagi = e.pagi; r.siang = e.siang; } }); });
+  apiM('absensi.save', { tanggal: tgl, entries: ent }, true).catch(e => {
+    if (S.pres === P) { Object.keys(was).forEach(k => { P.changed[k] = 1; }); presSummary(); }
+    toast('Presensi BELUM tersimpan: ' + e.message + ' Tekan Simpan lagi.', 'err');
+  });
 }
 
 PAGES.rekap = async function (o) {
@@ -636,8 +742,8 @@ const CRUD = {};
 function crud(cfg) {
   CRUD[cfg.id] = cfg;
   PAGES[cfg.id] = async function () {
-    const ctx = cfg.prep ? await cfg.prep() : {};
-    const res = await api(cfg.list, cfg.args ? cfg.args() : {});
+    const both = await Promise.all([cfg.prep ? cfg.prep() : {}, api(cfg.list, cfg.args ? cfg.args() : {})]);
+    const ctx = both[0], res = both[1];
     S[cfg.id] = { rows: cfg.rows ? cfg.rows(res) : res, ctx: ctx, res: res };
     return crudHtml(cfg);
   };
@@ -1302,9 +1408,17 @@ document.addEventListener('keydown', e => {
   else {
   document.body.classList.add('auth-mode');
   $('#app-container').innerHTML = bootHtml();
+  const si = readSessInfo();
+  if (si && si.user && si.menu) applySession({ token: saved, user: si.user, menu: si.menu, config: si.config || {} });
   gasPost('resumeSession', [saved]).then(
-    res => { if (res && res.success) applySession(res.data); else { clearToken(); showLogin(res && res.code === 'AUTH' ? '' : (res && res.message)); } },
-    e => { showLogin(e.message || 'Koneksi gagal. Periksa jaringan lalu coba lagi.'); });
+    res => {
+      if (res && res.success) {
+        if (!si || JSON.stringify(si.menu) !== JSON.stringify(res.data.menu) || si.user.role !== res.data.user.role) { AppState.seq++; applySession(res.data); }
+        else { AppState.user = res.data.user; AppState.config = res.data.config; saveSessInfo(res.data); }
+      } else if (si) { forceLogout(res && res.code === 'AUTH' ? 'Sesi berakhir. Silakan masuk kembali.' : (res && res.message)); }
+      else { clearToken(); showLogin(res && res.code === 'AUTH' ? '' : (res && res.message)); }
+    },
+    e => { if (!si) showLogin(e.message || 'Koneksi gagal. Periksa jaringan lalu coba lagi.'); else toast('Koneksi ke server bermasalah. Menampilkan data terakhir di perangkat.', 'err'); });
   }
   gasGet('publicConfig').then(r => {
     if (r && r.success && !AppState.token) {
@@ -1421,7 +1535,7 @@ function stackTables(root) {
     ind.style.setProperty('--y', (TH - 50) + 'px'); ind.style.opacity = 1;
     const t0 = Date.now();
     let ok = true;
-    try { await navigateTo(AppState.page); } catch (e) { ok = false; }
+    try { await navigateTo(AppState.page, { force: true }); } catch (e) { ok = false; }
     const left = MIN_SPIN - (Date.now() - t0); if (left > 0) await wait(left);
     if (ok) { ind.classList.remove('spin'); ind.classList.add('done'); await wait(520); }
     ind.style.setProperty('--y', '-56px'); ind.style.opacity = 0; await wait(220);
@@ -1429,3 +1543,6 @@ function stackTables(root) {
     if (ok) toast('Data diperbarui.', 'ok');
   });
 })();
+
+document.addEventListener('pointerdown', e => { AppState.lastTap = e.target; }, true);
+['input', 'change', 'click'].forEach(ev => document.addEventListener(ev, e => { const c = document.getElementById('app-container'); if (c && c.contains(e.target)) AppState.uiDirty = true; }, true));

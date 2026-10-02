@@ -615,3 +615,4 @@ body{overscroll-behavior:none}
 .ptr.done .ptr-ring{opacity:1;background:#10b981;animation:ptrPop .45s cubic-bezier(.2,.9,.25,1.4) both}
 @keyframes ptrRot{to{transform:rotate(360deg)}}
 @keyframes ptrPop{0%{transform:scale(.3);opacity:0}60%{transform:scale(1.18);opacity:1}100%{transform:scale(1);opacity:1}}
+.opt-out{opacity:.25;pointer-events:none;transition:opacity .18s ease;filter:grayscale(1)}
