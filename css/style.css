@@ -616,3 +616,23 @@ body{overscroll-behavior:none}
 @keyframes ptrRot{to{transform:rotate(360deg)}}
 @keyframes ptrPop{0%{transform:scale(.3);opacity:0}60%{transform:scale(1.18);opacity:1}100%{transform:scale(1);opacity:1}}
 .opt-out{opacity:.25;pointer-events:none;transition:opacity .18s ease;filter:grayscale(1)}
+
+.sync{appearance:none;font:inherit;cursor:default;display:inline-flex;align-items:center;gap:.4rem;border:1px solid var(--border);background:var(--surface);color:var(--muted);border-radius:9999px;padding:.3rem .7rem;font-size:12px;font-weight:600;line-height:1;white-space:nowrap;transition:background .2s,color .2s,border-color .2s}
+.sync::before{content:none!important;display:none!important}
+.sync-dot{width:8px;height:8px;border-radius:50%;background:#10b981;flex:none}
+.sync-s{display:none}
+.sync[data-st="busy"],.sync[data-st="save"]{color:var(--primary);border-color:rgba(37,99,235,.35)}
+[data-theme="dark"] .sync[data-st="busy"],[data-theme="dark"] .sync[data-st="save"]{color:#93c5fd}
+.sync[data-st="busy"] .sync-dot,.sync[data-st="save"] .sync-dot{background:#3b82f6;animation:syncPulse 1s ease-in-out infinite}
+.sync[data-st="save"] .sync-dot{background:#f59e0b}
+.sync[data-st="err"]{cursor:pointer;color:#dc2626;border-color:rgba(220,38,38,.45);background:rgba(220,38,38,.08)}
+[data-theme="dark"] .sync[data-st="err"]{color:#fca5a5}
+.sync[data-st="err"] .sync-dot{background:#ef4444}
+@keyframes syncPulse{0%,100%{transform:scale(.7);opacity:.5}50%{transform:scale(1.25);opacity:1}}
+@media (max-width:767.98px){.sync{padding:.3rem .55rem;font-size:11px}.sync-t{display:none}.sync-s{display:inline}.sync[data-st="ok"] .sync-s{display:none}.sync[data-st="ok"]{padding:.45rem}}
+.slot.up::after,.pf-slot.up::after{content:attr(data-st);position:absolute;inset:0;display:grid;place-items:center;background:rgba(15,23,42,.62);color:#fff;font-size:12px;font-weight:700;text-align:center;padding:.5rem;border-radius:inherit;z-index:3}
+.slot.up::before,.pf-slot.up::before{content:"";position:absolute;left:50%;top:calc(50% - 26px);width:22px;height:22px;margin-left:-11px;border-radius:50%;border:3px solid rgba(255,255,255,.35);border-top-color:#fff;animation:spin .8s linear infinite;z-index:4}
+.slot,.pf-slot{position:relative}
+.tb-title{min-width:0;flex:1 1 auto}
+.tb-app,.tb-page{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.sync{flex:none}

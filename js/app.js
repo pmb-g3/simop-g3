@@ -86,7 +86,8 @@ function apiM(action, payload, quiet) {
   const optRow = !rd && /delete|Delete|\.del$/.test(action) && Date.now() - (AppState.optAt || 0) < 20000 ? AppState.optRow : null;
   if (optRow) AppState.optRow = null;
   if (optRow) optRow.classList.add('opt-out');
-  return gasPost('api', [AppState.token, action, payload || {}]).then(res => {
+  const isFile = action === 'file.get';
+  return gasPost('api', [AppState.token, action, payload || {}], { prio: DC.bg ? 2 : isFile ? 1 : 0, idem: rd || isFile, track: !isFile, bg: DC.bg }).then(res => {
     if (!q) loader(-1);
     if (res && res.success) {
       if (rd) {
@@ -298,41 +299,84 @@ function uiBusy() {
   return AppState.uiDirty || document.body.classList.contains('modal-open') || document.body.classList.contains('drawer-open') ||
     (AppState.page === 'presensi' && S.pres && S.pres.changed && Object.keys(S.pres.changed).length > 0);
 }
+function paintPage(r, keepScroll) {
+  const c = $('#app-container'), y = window.scrollY;
+  c.innerHTML = typeof r === 'string' ? r : r.html;
+  if (r && r.init) r.init(c);
+  AppState.uiDirty = false;
+  window.scrollTo(0, keepScroll ? y : 0);
+}
 async function navigateTo(id, opts) {
-  if (!AppState.token) return showLogin();
+  if (!AppState.token) { showLogin(); return false; }
   if (!AppState.menu.some(m => m.id === id)) id = 'dashboard';
   opts = opts || {};
   const same = AppState.page === id, seq = ++AppState.seq, c = $('#app-container');
   const afterWrite = Date.now() - (AppState.lastWrite || 0) < 4000;
   const keep = !!opts.force || (same && afterWrite);
-  AppState.page = id; setActiveNav(id); closeDrawer();
-  const paint = (r, keepScroll) => {
-    const y = window.scrollY;
-    c.innerHTML = typeof r === 'string' ? r : r.html;
-    if (r && r.init) r.init(c);
-    AppState.uiDirty = false;
-    window.scrollTo(0, keepScroll ? y : 0);
-  };
-  let shown = false;
+  AppState.page = id; AppState.pageOpts = opts.force ? (AppState.pageOpts || {}) : opts; setActiveNav(id); closeDrawer();
+  let shown = keep && same && c.children.length > 0;
   if (!keep && !afterWrite) {
     DC.mode = 'only'; DC.oldest = 0;
     let r = null;
     try { r = await PAGES[id](opts); } catch (e) { r = null; } finally { DC.mode = 'net'; }
-    if (r && seq === AppState.seq) { paint(r, false); shown = true; }
+    if (r && seq === AppState.seq) { paintPage(r, false); shown = true; }
+    if (shown && DC.oldest < 4000) return true;
   }
-  if (shown && DC.oldest < 4000) return;
-  if (!shown && !keep) c.innerHTML = skeleton();
+  const onScreen = shown;
+  if (!onScreen) c.innerHTML = skeleton();
   const snap = Object.assign({}, S);
   DC.changed = false;
   try {
-    const r = await PAGES[id](opts);
+    const r = await PAGES[id](opts.force ? (AppState.pageOpts || {}) : opts);
+    if (seq !== AppState.seq) return true;
+    if (!onScreen || keep) paintPage(r, onScreen);
+    else if (DC.changed && !uiBusy()) paintPage(r, true);
+    else Object.keys(S).forEach(k => { if (S[k] !== snap[k]) { if (k in snap) S[k] = snap[k]; else delete S[k]; } });
+    return true;
+  } catch (e) {
+    if (seq !== AppState.seq || !AppState.token) return false;
+    if (onScreen) { Object.keys(S).forEach(k => { if (S[k] !== snap[k]) { if (k in snap) S[k] = snap[k]; else delete S[k]; } }); setSyncError(e.message); }
+    else c.innerHTML = errBox(e.message);
+    AppState.lastNavError = e.message;
+    return false;
+  }
+}
+/** Periksa data terbaru diam-diam (dipanggil berkala & saat aplikasi kembali dibuka) */
+async function refreshQuiet() {
+  if (!AppState.token || !AppState.page || uiBusy() || NET.inflight > 0 || DC.bg) return;
+  if (Date.now() - (AppState.lastWrite || 0) < 4000) return;
+  const id = AppState.page, seq = AppState.seq, snap = Object.assign({}, S);
+  DC.changed = false;
+  try {
+    const r = await PAGES[id](AppState.pageOpts || {});
     if (seq !== AppState.seq) return;
-    if (!shown) paint(r, keep);
-    else if (DC.changed && !uiBusy()) paint(r, true);
+    if (DC.changed && !uiBusy()) paintPage(r, true);
     else Object.keys(S).forEach(k => { if (S[k] !== snap[k]) { if (k in snap) S[k] = snap[k]; else delete S[k]; } });
   } catch (e) {
-    if (seq === AppState.seq && AppState.token && !shown) c.innerHTML = errBox(e.message);
+    if (seq === AppState.seq) { Object.keys(S).forEach(k => { if (S[k] !== snap[k]) { if (k in snap) S[k] = snap[k]; else delete S[k]; } }); setSyncError(e.message); }
   }
+}
+setInterval(() => { if (document.visibilityState === 'visible') refreshQuiet(); }, 90000);
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && Date.now() - (NET.lastOk || 0) > 20000) refreshQuiet(); });
+
+/** Indikator sinkron di bilah atas */
+let syncErrMsg = '', syncErrOk = 0;
+function setSyncError(m) { syncErrMsg = m || 'Gagal terhubung ke server.'; syncErrOk = NET.okCount || 0; onNetState(NET); }
+function onNetState(n) {
+  const b = document.getElementById('syncBadge'); if (!b) return;
+  if (syncErrMsg && (n.okCount || 0) > syncErrOk) syncErrMsg = '';
+  const st = n.writes > 0 ? 'save' : n.reads > 0 ? 'busy' : syncErrMsg ? 'err' : 'ok';
+  const T = { ok: ['Sheets & Drive tersinkron', 'Tersinkron'], busy: ['Menyinkronkan data\u2026', 'Sinkron\u2026'], save: ['Menyimpan ke server\u2026', 'Menyimpan\u2026'], err: ['Gagal sinkron \u00B7 ketuk untuk ulang', 'Gagal \u00B7 ulang'] };
+  if (b.dataset.st === st) return;
+  b.dataset.st = st;
+  b.querySelector('.sync-t').textContent = T[st][0]; b.querySelector('.sync-s').textContent = T[st][1];
+  b.title = st === 'err' ? syncErrMsg : T[st][0];
+  b.setAttribute('aria-label', b.title);
+}
+function syncTap() {
+  if (document.getElementById('syncBadge').dataset.st !== 'err') return;
+  syncErrMsg = ''; onNetState(NET);
+  navigateTo(AppState.page, { force: true }).then(ok => { if (ok) toast('Data diperbarui.', 'ok'); else toast('Masih gagal: ' + (AppState.lastNavError || 'server tidak merespons') + '', 'err'); });
 }
 const PREFETCH_ORDER = ['presensi', 'material', 'program', 'pembayaran', 'rekapmat', 'karyawan', 'izin', 'rekap', 'piket', 'armada', 'keuangan', 'dashboard', 'akun'];
 async function prefetchMenus() {
@@ -342,6 +386,8 @@ async function prefetchMenus() {
   for (const id of ids) {
     if (!AppState.token || id === AppState.page || id === 'presensi') continue;
     if (Date.now() - (AppState.lastWrite || 0) < 4000) await new Promise(r => setTimeout(r, 1500));
+    for (let w = 0; w < 40 && (NET.queue[0].length || (NET.inflight > 0 && !DC.bg) || Date.now() - (AppState.lastAct || 0) < 1500); w++) await new Promise(r => setTimeout(r, 400));
+    if (!AppState.token) return;
     const seq0 = AppState.seq, snap = Object.assign({}, S), exp = S.expRange ? Object.assign({}, S.expRange) : null;
     DC.bg = true;
     try { await PAGES[id]({}); } catch (e) { } finally { DC.bg = false; }
@@ -997,10 +1043,11 @@ function programUpdated(rec) {
 }
 async function uploadSlot(pid, slot, el) {
   const f = await pickImage(); if (!f) return;
-  el.classList.add('up');
+  el.classList.add('up'); el.dataset.st = 'Menyiapkan foto\u2026';
   try {
     toast('Mengompres foto\u2026');
     const c = await compressImage(f);
+    el.dataset.st = 'Mengunggah ' + c.kb + ' KB\u2026';
     const r = await apiM('program.foto', { id: pid, slot: slot, data: c.data, mime: c.mime });
     toast('Foto ' + slot + ' tersimpan \u00B7 ' + c.kb + ' KB', 'ok');
     programUpdated(r.data);
@@ -1031,6 +1078,7 @@ async function programForm(rec, preset) {
       const fotos = rec ? [] : ['Before', 'During', 'After'].filter(k => (S.pf || {})[k]);
       for (let i = 0; i < fotos.length; i++) {
         toast('Mengunggah foto ' + fotos[i] + ' (' + (i + 1) + '/' + fotos.length + ')\u2026');
+        const pfEl = $('#pf_' + fotos[i]); if (pfEl) { pfEl.classList.add('up'); pfEl.dataset.st = 'Mengunggah\u2026'; }
         await apiM('program.foto', { id: r.data.ID, slot: fotos[i], data: S.pf[fotos[i]].data, mime: S.pf[fotos[i]].mime });
       }
       S.pf = {}; const dest = S.camForm ? 'program' : AppState.page; S.camForm = false;
@@ -1534,15 +1582,17 @@ function stackTables(root) {
     ind.classList.remove('pull', 'ready'); ind.classList.add('spin');
     ind.style.setProperty('--y', (TH - 50) + 'px'); ind.style.opacity = 1;
     const t0 = Date.now();
-    let ok = true;
-    try { await navigateTo(AppState.page, { force: true }); } catch (e) { ok = false; }
+    let ok = false;
+    try { ok = (await navigateTo(AppState.page, { force: true })) === true; } catch (e) { ok = false; }
     const left = MIN_SPIN - (Date.now() - t0); if (left > 0) await wait(left);
     if (ok) { ind.classList.remove('spin'); ind.classList.add('done'); await wait(520); }
     ind.style.setProperty('--y', '-56px'); ind.style.opacity = 0; await wait(220);
     hide(); busy = false;
     if (ok) toast('Data diperbarui.', 'ok');
+    else toast('Gagal memperbarui: ' + (AppState.lastNavError || 'server tidak merespons') + ' Data yang tampil adalah data terakhir.', 'err');
   });
 })();
 
-document.addEventListener('pointerdown', e => { AppState.lastTap = e.target; }, true);
+document.addEventListener('pointerdown', e => { AppState.lastTap = e.target; AppState.lastAct = Date.now(); }, true);
+document.addEventListener('keydown', () => { AppState.lastAct = Date.now(); }, true);
 ['input', 'change', 'click'].forEach(ev => document.addEventListener(ev, e => { const c = document.getElementById('app-container'); if (c && c.contains(e.target)) AppState.uiDirty = true; }, true));

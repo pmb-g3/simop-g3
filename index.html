@@ -45,7 +45,7 @@
     <header class="topbar" id="topbar">
       <button class="icon-btn only-m" onclick="openDrawer()" aria-label="Buka menu"><i class="bi bi-list"></i></button>
       <div class="tb-title"><div class="tb-app" id="tbApp">SIMOP Gontor Kampus 3</div><div class="tb-page" id="pageTitle">Dashboard</div></div>
-      <span class="sync hide-m">Sheets &amp; Drive tersinkron</span>
+      <button type="button" class="sync" id="syncBadge" data-st="ok" onclick="syncTap()" aria-label="Sheets &amp; Drive tersinkron"><span class="sync-dot" aria-hidden="true"></span><span class="sync-t">Sheets &amp; Drive tersinkron</span><span class="sync-s">Tersinkron</span></button>
       <div class="row-f gap1" id="tbActions"></div>
       <button class="icon-btn" id="themeBtn" onclick="toggleTheme()" aria-label="Ganti tema terang/gelap"><i class="bi bi-moon-stars"></i></button>
     </header>
