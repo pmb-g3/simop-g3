@@ -602,13 +602,17 @@ async function loadThumbs(root) {
   const fromDev = await thGetMany(Object.keys(byUrl));
   Object.keys(fromDev).forEach(u => fill(u, fromDev[u]));
   const need = Object.keys(byUrl), parts = [];
-  for (let i = 0; i < need.length; i += 12) parts.push(need.slice(i, i + 12));
+  for (let i = 0; i < need.length; i += 6) parts.push(need.slice(i, i + 6));
   const run = async () => {
     while (parts.length) {
       const part = parts.shift();
       try {
         const r = await apiM('file.thumbs', { urls: part }, true);
-        const got = {}; part.forEach(u => { const d = r.data.map[u] || null; if (d) got[u] = d; fill(u, d); });
+        const skip = r.data.skip || [], got = {};
+        part.forEach(u => { if (skip.indexOf(u) >= 0) return; const d = r.data.map[u] || null; if (d) got[u] = d; fill(u, d); });
+        for (const u of skip) {
+          try { const d = (await apiM('file.get', { url: u, thumb: 1 }, true)).data.dataUrl; if (d && d.length < 400000) got[u] = d; fill(u, d); } catch (e) { fill(u, null); }
+        }
         thPutMany(got);
       } catch (e) { part.forEach(u => fill(u, null)); }
     }
@@ -1143,27 +1147,86 @@ PAGES.program = async function () {
   const r = await api('program.list');
   S.prog = { rows: r.rows, sub: r.sub, minggu: r.minggu }; S.progKey = S.progKey || 'ini';
   return {
-    html: `<div class="page-head"><div><h1>Program kerja</h1><p>Rencana dan progres fisik tiap sub-bagian, dikelompokkan per bagian, lengkap dengan dokumentasi foto Sebelum \u00B7 Proses \u00B7 Selesai.</p></div><div class="row-f gap1 wrap"><button class="btn-x btn-o" onclick="subManage()"><i class="bi bi-diagram-3"></i> Kelola sub-bagian</button><button class="btn-x btn-o" onclick="importOpen('program')"><i class="bi bi-file-earmark-spreadsheet"></i> Impor Excel</button><button class="btn-x btn-p" onclick="programForm()"><i class="bi bi-plus-lg"></i> Tambah program</button></div></div>
-    <section class="card-x"><div class="tools">
+    html: `<div class="page-head"><div><h1>Program kerja</h1><p>Rencana dan progres fisik tiap sub-bagian, dikelompokkan per bagian, lengkap dengan dokumentasi foto Sebelum \u00B7 Proses \u00B7 Selesai.</p></div><div class="row-f gap1 wrap ph-acts"><button class="btn-x btn-o" onclick="subManage()"><i class="bi bi-diagram-3"></i> Kelola sub-bagian</button><button class="btn-x btn-o" onclick="importOpen('program')"><i class="bi bi-file-earmark-spreadsheet"></i> Impor Excel</button><button class="btn-x btn-p" onclick="programForm()"><i class="bi bi-plus-lg"></i> Tambah program</button></div></div>
+    <section class="card-x"><div class="tools prog-tools">
       <div class="search"><i class="bi bi-search"></i><input class="inp" id="progQ" type="search" placeholder="Cari program, lokasi, mandor\u2026" aria-label="Cari program" oninput="paintPrograms()"></div>
       <select class="inp" id="progS" style="width:auto" onchange="paintPrograms()" aria-label="Filter status"><option value="">Semua status</option><option value="Direncanakan">Direncanakan</option><option value="Berjalan">Proses</option><option value="Selesai">Selesai</option></select>
+      <select class="inp" id="progSub" style="width:auto;max-width:240px" onchange="S.progSub=this.value;paintPrograms()" aria-label="Filter sub-bagian"><option value="">Semua sub-bagian</option></select>
       <select class="inp" id="progK" style="width:auto" onchange="S.progKey=this.value;paintPrograms()" aria-label="Filter periode">${[['ini', 'Periode minggu ini'], ['lalu', 'Minggu lalu'], ['bulan', 'Bulan ini'], ['semua', 'Semua'], ['rentang', 'Pilih tanggal\u2026']].map(o => `<option value="${o[0]}"${S.progKey === o[0] ? ' selected' : ''}>${o[1]}</option>`).join('')}</select>
       <span id="progRg" class="row-f gap1 wrap"${S.progKey === 'rentang' ? '' : ' hidden'}><input type="date" class="inp" style="width:auto" id="progFrom" value="${E(S.progFrom || '')}" onchange="S.progFrom=this.value;paintPrograms()" aria-label="Dari tanggal"><span class="muted">s.d.</span><input type="date" class="inp" style="width:auto" id="progTo" value="${E(S.progTo || '')}" onchange="S.progTo=this.value;paintPrograms()" aria-label="Sampai tanggal"></span>
     </div><div id="progList"></div></section>`,
     init: () => paintPrograms()
   };
 };
+const FT = [['Before', 'Before'], ['During', 'During'], ['After', 'After']];
+function progSubOptions() {
+  const sel = $('#progSub'); if (!sel || !S.prog) return;
+  const by = { 'Tambal Sulam': {}, 'Proyek': {} };
+  S.prog.rows.forEach(p => { if (by[p.Bagian]) { const k = p.SubBagian || ''; by[p.Bagian][k] = (by[p.Bagian][k] || 0) + 1; } });
+  const cur = S.progSub || '';
+  const html = '<option value="">Semua sub-bagian</option>' + Object.keys(by).map(b => { const ks = Object.keys(by[b]).sort((x, y) => x.localeCompare(y)); return ks.length ? `<optgroup label="${E(b)}">${ks.map(k => `<option value="${E(b + '|' + k)}"${cur === b + '|' + k ? ' selected' : ''}>${E(k || '(Tanpa sub-bagian)')} (${by[b][k]})</option>`).join('')}</optgroup>` : ''; }).join('');
+  if (sel.dataset.h !== html) { sel.innerHTML = html; sel.dataset.h = html; }
+  if (cur && !sel.querySelector(`option[value="${cur.replace(/"/g, '')}"]`)) { S.progSub = ''; sel.value = ''; }
+}
+function progRow(p, n) {
+  const st = isStaff();
+  const chips = FT.map(f => { const has = !!p['Foto' + f[0]]; return `<button type="button" class="pf-chip${has ? ' ok' : ''}" data-pid="${p.ID}" data-slot="${f[0]}" onclick="fotoChip(this)" ${!has && !st ? 'disabled' : ''} aria-label="${has ? 'Foto ' + f[1] + ' sudah ada, klik untuk lihat/ganti/hapus' : 'Unggah foto ' + f[1]}"><i class="bi ${has ? 'bi-check-circle-fill' : 'bi-plus-circle'}"></i>${f[1]}</button>`; }).join('');
+  const info = [p.PenanggungJawab, p.Durasi].filter(Boolean).join(' \u00B7 ');
+  return `<div class="pr-row" id="prog_${p.ID}"><div class="pr-main"><span class="pr-no">${n}.</span><div class="pr-txt"><b title="${E(p.Uraian || '')}">${E(p.Uraian || p.SubBagian || '-')}</b>${info ? `<small>${E(info)}</small>` : ''}</div></div><div class="pr-st">${badge(p.Status || 'Direncanakan')}</div><div class="pr-ft">${chips}</div>${st ? `<div class="pr-act"><button class="btn-x btn-o btn-sm" onclick="programEdit('${p.ID}')" aria-label="Ubah program" title="Ubah"><i class="bi bi-pencil"></i><span class="hide-m"> Ubah</span></button><button class="btn-x btn-d btn-sm" onclick="programDel('${p.ID}')" aria-label="Hapus program" title="Hapus"><i class="bi bi-trash"></i></button></div>` : ''}</div>`;
+}
+function progCompactGroup(bagian, list, opt) {
+  opt = opt || {};
+  (S.expRange = S.expRange || {})[bagian] = opt.range || { from: '', to: '', label: 'Semua periode' };
+  const subs = {}; list.forEach(p => { const k = p.SubBagian || ''; (subs[k] = subs[k] || []).push(p); });
+  const col = S.progCol = S.progCol || {};
+  let n = 0;
+  const body = list.length ? Object.keys(subs).sort((x, y) => x.localeCompare(y)).map(k => {
+    const id = bagian + '|' + k, rows = subs[k], fotoOk = rows.reduce((a, p) => a + FT.filter(f => p['Foto' + f[0]]).length, 0);
+    return `<div class="sb-grp${col[id] ? ' col' : ''}"><button type="button" class="sb-h" onclick="progToggle(this,'${E(id).replace(/'/g, '&#39;')}')"><i class="bi bi-chevron-down"></i><b>${E(k || '(Tanpa sub-bagian)')}</b><span class="muted">${rows.length} program \u00B7 foto ${fotoOk}/${rows.length * 3}</span></button><div class="sb-b">${rows.map(p => progRow(p, ++n)).join('')}</div></div>`;
+  }).join('') : emptyBox('Belum ada program ' + bagian + ' pada filter ini');
+  return `<div class="grp grp-${bagian === 'Tambal Sulam' ? 'ts' : 'pr'}">
+    <div class="grp-h"><span>${E(bagian.toUpperCase())}${opt.range ? `<small class="grp-sub">${E(opt.range.label)}</small>` : ''}</span><span class="pill">${list.length} program</span></div>
+    <div class="grp-b">${body}
+      <div class="row-f between wrap gap1 mt2">${isStaff() ? `<button class="btn-x btn-p btn-sm" onclick="programForm(null,{Bagian:'${bagian}'})"><i class="bi bi-plus-lg"></i> Tambah program ${E(bagian)}</button>` : '<span></span>'}<button class="btn-x btn-o btn-sm" onclick="programExportGroup('${bagian}',this)"><i class="bi bi-file-earmark-word"></i> Export Docs ${E(bagian)} (sesuai tampilan)</button></div>
+    </div></div>`;
+}
+function progToggle(btn, id) { const g = btn.parentElement; g.classList.toggle('col'); (S.progCol = S.progCol || {})[id] = g.classList.contains('col'); }
+async function fotoChip(btn) {
+  const pid = btn.dataset.pid, slot = btn.dataset.slot, p = (S.prog && S.prog.rows.find(x => x.ID === pid)) || null;
+  if (!p) return;
+  const url = p['Foto' + slot], nama = p.Uraian || p.SubBagian;
+  if (!url) { if (isStaff()) uploadSlot(pid, slot, btn); return; }
+  openModal({
+    title: 'Foto ' + slot + ' \u00B7 ' + nama, size: 'lg',
+    body: `<div class="fp-view" id="fpView"><span class="spin-sm"></span> Memuat foto\u2026</div>`,
+    footer: (isStaff() ? `<button class="btn-x btn-d" id="fpDel"><i class="bi bi-trash"></i> Hapus</button><button class="btn-x btn-o" id="fpRep"><i class="bi bi-arrow-repeat"></i> Ganti</button>` : '') + `<button class="btn-x btn-p" data-bs-dismiss="modal">Tutup</button>`
+  });
+  if (isStaff()) {
+    $('#fpRep').onclick = () => { closeModal(); setTimeout(() => uploadSlot(pid, slot, btn), 250); };
+    $('#fpDel').onclick = () => { closeModal(); setTimeout(() => deleteSlot(pid, slot, slot, btn), 250); };
+  }
+  try {
+    let d = AppState.img[url];
+    if (!d) { const m = await thGetMany([url]); d = m[url]; }
+    if (!d) { d = (await apiM('file.get', { url: url, thumb: 1 }, true)).data.dataUrl; if (d) { AppState.img[url] = d; if (d.length < 400000) thPutMany({ [url]: d }); } }
+    const v = $('#fpView'); if (v) v.innerHTML = `<img alt="Foto ${E(slot)} ${E(nama)}" src="${d}">`;
+    try { const full = (await apiM('file.get', { url: url }, true)).data.dataUrl; const v2 = $('#fpView img'); if (v2 && full) v2.src = full; } catch (e) { }
+  } catch (e) { const v = $('#fpView'); if (v) v.innerHTML = `<div class="err-box">${E(e.message)}</div>`; }
+}
 function paintPrograms() {
   if (!S.prog || !Array.isArray(S.prog.rows)) { const el0 = $('#progList'); if (el0) el0.innerHTML = skeleton(); if (AppState.page === 'program') setTimeout(() => navigateTo('program', { force: true }), 50); return; }
   const q = $('#progQ').value.trim().toLowerCase(), st = $('#progS').value, key = S.progKey || 'ini';
   $('#progRg').hidden = key !== 'rentang';
   const filt = p => (!st || p.Status === st) && (!q || rowText(p).indexOf(q) >= 0);
   const el = $('#progList');
+  progSubOptions();
+  const sub = S.progSub || '';
+  const filtSub = p => !sub || (p.Bagian + '|' + (p.SubBagian || '')) === sub;
   el.innerHTML = ['Tambal Sulam', 'Proyek'].map(b => {
     const rg = progRange(key, b, S.prog.minggu);
-    return programGroupHtml(b, S.prog.rows.filter(p => p.Bagian === b && (!rg.from || p.Tanggal >= rg.from) && (!rg.to || p.Tanggal <= rg.to)).filter(filt), { range: rg });
+    if (sub && sub.split('|')[0] !== b) { (S.expRange = S.expRange || {})[b] = rg; return ''; }
+    return progCompactGroup(b, S.prog.rows.filter(p => p.Bagian === b && (!rg.from || p.Tanggal >= rg.from) && (!rg.to || p.Tanggal <= rg.to)).filter(filt).filter(filtSub), { range: rg });
   }).join('');
-  loadThumbs(el);
 }
 function findProg(id) {
   return (S.prog && S.prog.rows.find(x => x.ID === id)) || (S.dash && S.dash.d.programByBagian && S.dash.d.programByBagian.flatMap(g => g.items).find(x => x.ID === id));
