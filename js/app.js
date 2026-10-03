@@ -1072,27 +1072,69 @@ function keuPanel(k) {
 }
 function keuHtml() {
   const tot = b => (S.keu.data.find(k => k.bagian === b) || { total: 0 }).total;
-  return `<div class="page-head"><div><h1>Laporan keuangan</h1><p>Rekapitulasi anggaran mingguan per bagian, dengan penomoran minggu masing-masing.</p></div><button class="btn-x btn-g" onclick="keuAdd()"><i class="bi bi-plus-lg"></i> Input laporan keuangan</button></div>
+  return `<div class="page-head"><div><h1>Laporan keuangan</h1><p>Rekapitulasi anggaran mingguan per bagian, dengan penomoran minggu masing-masing.</p></div><div class="row-f gap1 wrap"><button class="btn-x btn-o" onclick="importOpen('keuangan')"><i class="bi bi-file-earmark-spreadsheet"></i> Impor Excel</button><button class="btn-x btn-g" onclick="keuAdd()"><i class="bi bi-plus-lg"></i> Input laporan keuangan</button></div></div>
   <div class="two mb2">
     <div class="sum-card ts"><small>TOTAL KEUANGAN TAMBAL SULAM</small><b class="num">${Rp(tot('Tambal Sulam'))}</b></div>
     <div class="sum-card pr"><small>TOTAL KEUANGAN PROYEK</small><b class="num">${Rp(tot('Proyek'))}</b></div>
   </div>
   <div class="two">${S.keu.data.map(keuPanel).join('')}</div>`;
 }
+function keuPat(bagian) { const g = (S.keu && S.keu.data || []).find(x => x.bagian === bagian); return g && g.patokanAwal ? cycStart(g.patokanAwal) : ''; }
+function keuWeekOf(bagian, tgl) { const p = keuPat(bagian); if (!p || !tgl) return 0; const n = Math.floor((parseD(cycStart(tgl)) - parseD(p)) / (7 * 864e5)) + 1; return n < 1 ? 1 : n; }
+function keuWeekOpts(bagian, selN, selfId) {
+  const p = keuPat(bagian); if (!p) return '';
+  const ada = {}; ((S.keu.data.find(x => x.bagian === bagian) || {}).items || []).forEach(x => { if (x.ID !== selfId) ada[cycStart(x.TglMulai)] = 1; });
+  const cur = keuWeekOf(bagian, todayStr()), max = Math.max(cur + 4, selN || 0);
+  let h = '';
+  for (let n = max; n >= 1; n--) { const st = addD(p, (n - 1) * 7); h += `<option value="${n}"${n === selN ? ' selected' : ''}>Minggu ke-${n} \u00B7 ${fdate(st)} \u2013 ${fdate(addD(st, 6))}${ada[st] ? ' \u00B7 sudah ada' : ''}${n === cur ? ' \u00B7 minggu ini' : ''}</option>`; }
+  return h;
+}
+const rpFmt = v => { const d = String(v === undefined || v === null ? '' : v).replace(/\D/g, ''); return d ? Number(d).toLocaleString('id-ID') : ''; };
+const rpNum = v => { const d = String(v || '').replace(/^rp\.?\s*/i, '').replace(/\./g, '').replace(/\s/g, '').replace(',', '.'); return d === '' ? NaN : Number(d); };
+function keuFormBind(selfId) {
+  const B = $('#f_Bagian'), W = $('#f_MingguKe'), T = $('#f_TglMulai'), N = $('#f_Nominal'), info = $('#keuInfo');
+  const bag = () => B ? B.value : S.keuBag;
+  const sync = from => {
+    const p = keuPat(bag());
+    if (!p) { if (W) { W.innerHTML = '<option value="">Atur patokan Minggu ke-1 dulu</option>'; W.disabled = true; } if (info) info.textContent = 'Patokan awal Minggu ke-1 ' + bag() + ' belum diatur. Isi tanggal secara manual.'; return; }
+    if (W) W.disabled = false;
+    if (from === 'tgl' || from === 'bag') { const n = keuWeekOf(bag(), T.value || todayStr()); if (W) W.innerHTML = keuWeekOpts(bag(), n, selfId); }
+    if (from === 'mg' && W && W.value) T.value = addD(p, (Number(W.value) - 1) * 7);
+    const n = keuWeekOf(bag(), T.value), st = cycStart(T.value);
+    if (info) info.textContent = 'Minggu ke-' + n + ' ' + bag() + ': ' + fdate(st) + ' \u2013 ' + fdate(addD(st, 6));
+  };
+  if (B) B.addEventListener('change', () => sync('bag'));
+  if (W) W.addEventListener('change', () => sync('mg'));
+  if (T) T.addEventListener('change', () => sync('tgl'));
+  if (N) { N.setAttribute('inputmode', 'numeric'); N.value = rpFmt(N.value); N.addEventListener('input', () => { const pos = N.value.length - N.selectionStart; N.value = rpFmt(N.value); const np = Math.max(0, N.value.length - pos); try { N.setSelectionRange(np, np); } catch (e) { } }); }
+  sync('bag');
+}
+function keuNominal(d) { const n = rpNum(d.Nominal); if (!(n >= 0)) throw new Error('Nominal harus berupa angka, mis. 16.620.800'); d.Nominal = n; delete d.MingguKe; return d; }
 function keuAdd(bagian) {
+  S.keuBag = bagian || 'Tambal Sulam';
   openForm({ title: 'Input laporan keuangan', submit: 'Simpan',
-    fields: [{ k: 'Bagian', l: 'Bagian', t: 'select', opts: ['Tambal Sulam', 'Proyek'], req: true, full: true }, { k: 'TglMulai', l: 'Tanggal (dalam minggu terkait)', t: 'date', req: true, help: 'Nomor minggu dihitung otomatis dari patokan awal bagian.' }, { k: 'Nominal', l: 'Nominal anggaran (Rp)', t: 'number', req: true, min: 0, step: 500 }],
-    values: { Bagian: bagian || 'Tambal Sulam', TglMulai: todayStr() },
-    save: async d => { const r = await apiM('keu.save', d); toast(r.message, 'ok'); closeModal(); navigateTo('keuangan'); }
+    fields: [{ k: 'Bagian', l: 'Bagian', t: 'select', opts: ['Tambal Sulam', 'Proyek'], req: true, full: true },
+      { k: 'MingguKe', l: 'Minggu ke-', t: 'select', opts: [], full: true },
+      { k: 'TglMulai', l: 'Tanggal (otomatis dari Minggu ke-)', t: 'date', req: true },
+      { k: 'Nominal', l: 'Nominal anggaran (Rp)', req: true, ph: 'mis. 16.620.800' },
+      { k: 'info', t: 'html', html: '<p class="help" id="keuInfo" style="margin:0"></p>' }],
+    values: { Bagian: S.keuBag, TglMulai: todayStr() },
+    save: async d => { const r = await apiM('keu.save', keuNominal(d)); toast(r.message, 'ok'); closeModal(); navigateTo('keuangan'); }
   });
+  keuFormBind('');
 }
 function keuEdit(id, bagian) {
   const item = S.keu.data.flatMap(k => k.items).find(x => x.ID === id);
-  openForm({ title: 'Ubah laporan keuangan', submit: 'Simpan',
-    fields: [{ k: 'TglMulai', l: 'Tanggal', t: 'date', req: true }, { k: 'Nominal', l: 'Nominal anggaran (Rp)', t: 'number', req: true, min: 0, step: 1000 }],
-    values: item,
-    save: async d => { d.ID = id; d.Bagian = bagian; const r = await apiM('keu.save', d); toast(r.message, 'ok'); closeModal(); navigateTo('keuangan'); }
+  S.keuBag = bagian;
+  openForm({ title: 'Ubah laporan keuangan \u00B7 ' + bagian, submit: 'Simpan',
+    fields: [{ k: 'MingguKe', l: 'Minggu ke-', t: 'select', opts: [], full: true },
+      { k: 'TglMulai', l: 'Tanggal (otomatis dari Minggu ke-)', t: 'date', req: true },
+      { k: 'Nominal', l: 'Nominal anggaran (Rp)', req: true, ph: 'mis. 16.620.800' },
+      { k: 'info', t: 'html', html: '<p class="help" id="keuInfo" style="margin:0"></p>' }],
+    values: { TglMulai: item.TglMulai, Nominal: item.Nominal },
+    save: async d => { d.ID = id; d.Bagian = bagian; const r = await apiM('keu.save', keuNominal(d)); toast(r.message, 'ok'); closeModal(); navigateTo('keuangan'); }
   });
+  keuFormBind(id);
 }
 async function keuDel(id) {
   if (!(await confirmBox('Hapus data laporan keuangan ini?', 'Ya, hapus'))) return;
@@ -1839,6 +1881,12 @@ const IMP = {
     contoh: [['Ahmad Fauzi', 'Tambal Sulam', 'Perairan', 'Tukang', 'Aktif'], ['Slamet Riyadi', 'Proyek', 'Gedung Serbaguna', 'Kuli', '']],
     alias: { nama: ['nama', 'namalengkap', 'namakaryawan', 'namapekerja'], bagian: ['bagian'], lokasi: ['subbagian', 'lokasi', 'sublokasi'], jabatan: ['jabatan', 'posisi'], status: ['status'] }
   }
+};
+IMP.keuangan = {
+  judul: 'Laporan Keuangan', page: 'keuangan',
+  kolom: [['bagian', 'Bagian', 'WAJIB \u00B7 Tambal Sulam / Proyek'], ['minggu', 'Minggu ke-', 'WAJIB* \u00B7 angka, mis. 27 (atau isi Tanggal)'], ['tanggal', 'Tanggal', 'boleh kosong \u00B7 mis. 2026-10-03 atau 03/10/2026'], ['nominal', 'Nominal', 'WAJIB \u00B7 mis. 16620800 atau Rp 16.620.800']],
+  contoh: [['Tambal Sulam', '27', '', '16620800'], ['Proyek', '11', '', 'Rp 25.000.000']],
+  alias: { bagian: ['bagian'], minggu: ['mingguke', 'minggu', 'week', 'mke'], tanggal: ['tanggal', 'tglmulai', 'tgl', 'date'], nominal: ['nominal', 'nominalanggaran', 'anggaran', 'jumlah', 'total', 'nominalrp'] }
 };
 const impKey = v => String(v || '').toLowerCase().replace(/[^a-z0-9]/g, '');
 function impParse(text) {
