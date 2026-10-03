@@ -722,3 +722,7 @@ body{overscroll-behavior:none}
 .ur-btn{display:flex;gap:.25rem;flex:none}
 .ur-btn .btn-sm{min-height:30px;height:30px;padding:0 .55rem}
 @media (max-width:575.98px){#appModalFoot{flex-wrap:wrap;gap:.4rem}#appModalFoot>.btn-x{flex:1 1 auto;margin:0}}
+
+.build-warn{position:fixed;left:50%;bottom:calc(84px + var(--safe-b, 0px));transform:translateX(-50%);z-index:2100;max-width:min(680px,94vw);background:#7c2d12;color:#fff;border:1px solid #ea580c;border-radius:.75rem;padding:.7rem 2.4rem .7rem .9rem;font-size:13px;line-height:19px;box-shadow:0 10px 30px rgba(0,0,0,.35)}
+.build-warn button{position:absolute;right:.5rem;top:.4rem;border:0;background:transparent;color:#fff;font-size:20px;cursor:pointer;line-height:1}
+@media (min-width:992px){.build-warn{bottom:1.25rem}}

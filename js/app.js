@@ -517,9 +517,18 @@ function bootHtml() {
   const arcs = [1, 2, 3, 4, 5, 6].map(i => `<span class="arc a${i}"></span>`).join('');
   return `<div class="boot" role="status" aria-live="polite" aria-label="Memuat aplikasi"><div class="boot-stage">${arcs}<div class="boot-logo">${logoImg()}</div></div></div>`;
 }
+const NEED_BUILD = 20261003;
+function buildCheck(cfg) {
+  const b = Number(cfg && cfg.build || 0), old = $('#buildWarn');
+  if (b >= NEED_BUILD) { if (old) old.remove(); return; }
+  if (old || !document.body) return;
+  const el = document.createElement('div'); el.id = 'buildWarn'; el.className = 'build-warn'; el.setAttribute('role', 'alert');
+  el.innerHTML = '<b>Backend (Apps Script) belum diperbarui.</b> Beberapa fitur akan menampilkan "Aksi/Jenis tidak dikenal". Buka editor Apps Script \u2192 pastikan isi file Kode sudah versi terbaru \u2192 <b>Deploy \u2192 Manage deployments \u2192 ikon pensil \u2192 Version: New version \u2192 Deploy</b>. <button type="button" onclick="this.parentElement.remove()" aria-label="Tutup">\u00D7</button>';
+  document.body.appendChild(el);
+}
 function applySession(d) {
   AppState.token = d.token; AppState.user = d.user; AppState.menu = d.menu; AppState.config = d.config;
-  saveSessInfo(d); dcLoad();
+  saveSessInfo(d); dcLoad(); buildCheck(d.config);
   if (d.boot) { Object.keys(d.boot).forEach(k => { DC.mem[k] = { t: Date.now(), d: d.boot[k] }; }); dcSave(); }
   document.body.classList.remove('auth-mode'); renderShell();
   navigateTo('dashboard').then(() => setTimeout(() => { prefetchMenus().catch(() => { }); }, 700));
@@ -736,7 +745,7 @@ function dashProgGroupHtml(bagian) {
   const d = S.dash.d, all = (d.programByBagian.find(x => x.bagian === bagian) || { items: [] }).items;
   const rg = progRange(S.dashProg || 'ini', bagian, d.minggu);
   const list = all.filter(p => (!rg.from || p.Tanggal >= rg.from) && (!rg.to || p.Tanggal <= rg.to));
-  return progCompactGroup(bagian, list.slice(0, 4), { range: rg, more: list.length > 4 ? list.length - 4 : 0 });
+  return progCompactGroup(bagian, list.slice(0, 4), { range: rg, more: list.length > 4 ? list.length - 4 : 0, openAll: true });
 }
 function setDashProg(k) {
   S.dashProg = k;
@@ -1220,11 +1229,11 @@ function progCompactGroup(bagian, list, opt) {
   opt = opt || {};
   (S.expRange = S.expRange || {})[bagian] = opt.range || { from: '', to: '', label: 'Semua periode' };
   const subs = {}; list.forEach(p => { const k = p.SubBagian || ''; (subs[k] = subs[k] || []).push(p); });
-  const col = S.progCol = S.progCol || {};
+  const open = S.progOpen = S.progOpen || {}, autoOpen = !!opt.openAll || !!S.progSub || !!(($('#progQ') || {}).value || '').trim();
   let n = 0;
   const body = list.length ? Object.keys(subs).sort((x, y) => x.localeCompare(y)).map(k => {
     const id = bagian + '|' + k, rows = subs[k], fotoOk = rows.reduce((a, p) => a + FT.filter(f => p['Foto' + f[0]]).length, 0);
-    return `<div class="sb-grp${col[id] ? ' col' : ''}"><button type="button" class="sb-h" onclick="progToggle(this,'${E(id).replace(/'/g, '&#39;')}')"><i class="bi bi-chevron-down"></i><b>${E(k || '(Tanpa sub-bagian)')}</b><span class="muted">${rows.length} program \u00B7 foto ${fotoOk}/${rows.length * 3}</span></button><div class="sb-b">${rows.map(p => progRow(p, ++n)).join('')}</div></div>`;
+    return `<div class="sb-grp${autoOpen || open[id] ? '' : ' col'}"><button type="button" class="sb-h" aria-expanded="${autoOpen || open[id] ? 'true' : 'false'}" onclick="progToggle(this,'${E(id).replace(/'/g, '&#39;')}')"><i class="bi bi-chevron-down"></i><b>${E(k || '(Tanpa sub-bagian)')}</b><span class="muted">${rows.length} program \u00B7 foto ${fotoOk}/${rows.length * 3}</span></button><div class="sb-b">${rows.map(p => progRow(p, ++n)).join('')}</div></div>`;
   }).join('') : emptyBox('Belum ada program ' + bagian + ' pada filter ini');
   return `<div class="grp grp-${bagian === 'Tambal Sulam' ? 'ts' : 'pr'}">
     <div class="grp-h"><span>${E(bagian.toUpperCase())}${opt.range ? `<small class="grp-sub">${E(opt.range.label)}</small>` : ''}</span><span class="pill">${list.length + (opt.more || 0)} program</span></div>
@@ -1232,7 +1241,7 @@ function progCompactGroup(bagian, list, opt) {
       <div class="row-f between wrap gap1 mt2">${isStaff() ? `<button class="btn-x btn-p btn-sm" onclick="programForm(null,{Bagian:'${bagian}'})"><i class="bi bi-plus-lg"></i> Tambah program ${E(bagian)}</button>` : '<span></span>'}${opt.more ? `<button class="btn-x btn-o btn-sm" onclick="navigateTo('program')">Lihat ${opt.more} lainnya</button>` : ''}<button class="btn-x btn-o btn-sm" onclick="programExportGroup('${bagian}',this)"><i class="bi bi-file-earmark-word"></i> Export Docs ${E(bagian)} (sesuai tampilan)</button></div>
     </div></div>`;
 }
-function progToggle(btn, id) { const g = btn.parentElement; g.classList.toggle('col'); (S.progCol = S.progCol || {})[id] = g.classList.contains('col'); }
+function progToggle(btn, id) { const g = btn.parentElement; g.classList.toggle('col'); const op = !g.classList.contains('col'); (S.progOpen = S.progOpen || {})[id] = op; btn.setAttribute('aria-expanded', op ? 'true' : 'false'); }
 async function fotoChip(btn) {
   const pid = btn.dataset.pid, slot = btn.dataset.slot;
   let p = (S.prog && S.prog.rows.find(x => x.ID === pid)) || null;
@@ -1727,7 +1736,7 @@ document.addEventListener('keydown', e => {
     res => {
       if (res && res.success) {
         if (!si || JSON.stringify(si.menu) !== JSON.stringify(res.data.menu) || si.user.role !== res.data.user.role) { AppState.seq++; applySession(res.data); }
-        else { AppState.user = res.data.user; AppState.config = res.data.config; saveSessInfo(res.data); }
+        else { AppState.user = res.data.user; AppState.config = res.data.config; saveSessInfo(res.data); buildCheck(res.data.config); }
       } else if (si) { forceLogout(res && res.code === 'AUTH' ? 'Sesi berakhir. Silakan masuk kembali.' : (res && res.message)); }
       else { clearToken(); showLogin(res && res.code === 'AUTH' ? '' : (res && res.message)); }
     },
