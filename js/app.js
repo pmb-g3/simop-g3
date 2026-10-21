@@ -44,9 +44,9 @@ function toast(msg, type) {
   $('#toasts').appendChild(el);
   setTimeout(() => el.remove(), type === 'err' ? 6500 : 3600);
 }
-const READ_ACT = new Set(['dash.get', 'karyawan.list', 'absensi.get', 'rekap.absensi', 'rekap.bayar', 'rekap.list', 'izin.list', 'sub.list', 'program.list', 'katalog.list', 'material.list', 'piket.list', 'piket.staff', 'keu.list', 'armada.list', 'admin.users', 'admin.audit', 'admin.config', 'pilihan.list', 'minggu.info', 'mat.rekap']);
+const READ_ACT = new Set(['dash.get', 'karyawan.list', 'absensi.get', 'rekap.absensi', 'rekap.bayar', 'rekap.list', 'izin.list', 'sub.list', 'program.list', 'katalog.list', 'material.list', 'piket.list', 'piket.staff', 'keu.list', 'armada.list', 'admin.users', 'admin.audit', 'admin.config', 'pilihan.list', 'minggu.info', 'mat.rekap', 'wa.config']);
 const DC = { mem: {}, mode: 'net', changed: false, bg: false, user: '', ver: '', pv: {}, want: null, fresh: null };
-const NOWRITE = new Set(['file.get', 'file.thumbs', 'import.check', 'batch.read', 'sync.ver']);
+const NOWRITE = new Set(['file.get', 'file.thumbs', 'import.check', 'batch.read', 'sync.ver', 'program.laporan', 'wa.preview', 'wa.groups']);
 const DC_MISS = new Error('cache-miss');
 const dcKey = (a, p) => a + '|' + JSON.stringify(p || {});
 function dcStore() { try { return localStorage.getItem('simop-rt') ? localStorage : sessionStorage; } catch (e) { return sessionStorage; } }
@@ -103,7 +103,7 @@ function apiM(action, payload, quiet, o) {
   if (optRow) AppState.optRow = null;
   if (optRow) optRow.classList.add('opt-out');
   const isFile = action === 'file.get' || action === 'file.thumbs';
-  return gasPost('api', [AppState.token, action, payload || {}], { prio: DC.bg ? 2 : (isFile || (o && o.silent)) ? 1 : 0, idem: rd || isFile, track: !isFile && !(o && o.silent), bg: DC.bg }).then(res => {
+  return gasPost('api', [AppState.token, action, payload || {}], { prio: DC.bg ? 2 : (isFile || (o && o.silent)) ? 1 : 0, idem: rd || isFile || (NOWRITE.has(action) && action !== 'wa.groups'), track: !isFile && !(o && o.silent), bg: DC.bg, timeout: o && o.timeout }).then(res => {
     if (!q) loader(-1);
     if (res && res.success) {
       if (rd) {
@@ -139,7 +139,7 @@ const closeModal = () => bsModal('appModal').hide();
 $('#appModal').addEventListener('shown.bs.modal', () => { const f = $('#appModalBody input:not([type=hidden]),#appModalBody select,#appModalBody textarea'); if (f && window.matchMedia('(pointer:fine)').matches) f.focus(); });
 function confirmBox(msg, label) {
   const t = AppState.lastTap;
-  AppState.optRow = t && t.closest ? t.closest('tr, .li, .prog, .pk-row, .day-item, .kar-row') : null;
+  AppState.optRow = t && t.closest ? t.closest('tr, .li, .prog, .pk-row, .day-item, .kar-row, .kb-card') : null;
   AppState.optAt = Date.now();
   return new Promise(res => {
     const el = $('#confirmModal'), ok = $('#confirmOk'), m = bsModal('confirmModal');
@@ -228,21 +228,39 @@ function pickImage(camera) {
 function loadImg(file) {
   return new Promise((res, rej) => { const u = URL.createObjectURL(file), im = new Image(); im.onload = () => { URL.revokeObjectURL(u); res(im); }; im.onerror = () => { URL.revokeObjectURL(u); rej(new Error('Foto tidak dapat dibaca. Gunakan JPG atau PNG.')); }; im.src = u; });
 }
-async function compressImage(file) {
-  if (file.type.slice(0, 6) !== 'image/') throw new Error('Pilih berkas gambar (JPG/PNG).');
-  const im = await loadImg(file), w0 = im.naturalWidth, h0 = im.naturalHeight;
-  let max = 1280, q = 0.82, out = '';
-  for (let i = 0; i < 7; i++) {
-    const sc = Math.min(1, max / Math.max(w0, h0)), c = document.createElement('canvas');
-    c.width = Math.round(w0 * sc); c.height = Math.round(h0 * sc);
-    const g = c.getContext('2d'); g.fillStyle = '#fff'; g.fillRect(0, 0, c.width, c.height); g.drawImage(im, 0, 0, c.width, c.height);
-    out = c.toDataURL('image/jpeg', q);
-    if (out.length * 0.75 <= 950000) break;
-    q = Math.max(0.45, q - 0.1); max = Math.round(max * 0.85);
+async function decodeImage(file) {
+  if (window.createImageBitmap) {
+    try { return await createImageBitmap(file, { imageOrientation: 'from-image' }); } catch (e) { try { return await createImageBitmap(file); } catch (x) { } }
   }
-  const b64 = out.split(',')[1];
-  if (b64.length > 1750000) throw new Error('Foto masih terlalu besar setelah dikompres. Coba foto lain.');
-  return { data: b64, mime: 'image/jpeg', kb: Math.round(b64.length * 0.75 / 1024), preview: out };
+  return loadImg(file);
+}
+function drawScaled(src, max) {
+  const w0 = src.naturalWidth || src.width, h0 = src.naturalHeight || src.height, sc = Math.min(1, max / Math.max(w0, h0));
+  const c = document.createElement('canvas'); c.width = Math.max(1, Math.round(w0 * sc)); c.height = Math.max(1, Math.round(h0 * sc));
+  const g = c.getContext('2d'); g.imageSmoothingQuality = 'high'; g.fillStyle = '#fff'; g.fillRect(0, 0, c.width, c.height); g.drawImage(src, 0, 0, c.width, c.height);
+  return c;
+}
+function canvasB64(c, q) {
+  return new Promise(res => {
+    const viaUrl = () => res(c.toDataURL('image/jpeg', q).split(',')[1]);
+    if (!c.toBlob) return viaUrl();
+    c.toBlob(b => { if (!b) return viaUrl(); const r = new FileReader(); r.onload = () => res(String(r.result).split(',')[1]); r.onerror = viaUrl; r.readAsDataURL(b); }, 'image/jpeg', q);
+  });
+}
+/** Foto HP (3\u201312 MB) diperkecil ke sisi terpanjang 1280 px, JPEG \u00B1150\u2013400 KB, plus gambar kecil 480 px untuk daftar & galeri */
+async function compressImage(file) {
+  if (!file || String(file.type || 'image/').slice(0, 6) !== 'image/') throw new Error('Pilih berkas gambar (JPG/PNG).');
+  const im = await decodeImage(file);
+  let max = 1280, q = 0.72, data = '';
+  for (let i = 0; i < 4; i++) {
+    data = await canvasB64(drawScaled(im, max), q);
+    if (data.length * 0.75 <= 420000) break;
+    q = Math.max(0.5, q - 0.08); max = Math.round(max * 0.85);
+  }
+  const th = await canvasB64(drawScaled(im, 480), 0.7);
+  if (im.close) try { im.close(); } catch (e) { }
+  if (data.length > 1750000) throw new Error('Foto masih terlalu besar setelah dikompres. Coba foto lain.');
+  return { data: data, mime: 'image/jpeg', kb: Math.round(data.length * 0.75 / 1024), preview: 'data:image/jpeg;base64,' + data, thumb: th, thumbUrl: 'data:image/jpeg;base64,' + th };
 }
 const photoCtl = (id, label) => `<span class="lbl">${E(label)}</span><div class="row-f gap2 wrap"><button type="button" class="btn-x btn-o btn-sm" onclick="choosePhoto('${id}')"><i class="bi bi-camera"></i> Pilih / ambil foto</button><span id="${id}_info" class="muted" style="font-size:12px">Belum ada foto \u00B7 dikompres otomatis ke \u2264 1 MB</span></div><img id="${id}_pv" class="preview-img mt1" style="display:none;max-height:150px" alt="Pratinjau foto">`;
 async function choosePhoto(id) {
@@ -292,14 +310,17 @@ function renderShell() {
   $('#sidebarNav').innerHTML = html;
   const pref = ['dashboard', 'presensi', 'program', 'material', 'pembayaran'], have = new Set(m.map(x => x.id));
   const bn = pref.filter(p => have.has(p)).slice(0, 4).map(id => m.find(x => x.id === id));
-  const navBtn = it => `<button class="bn-item" data-nav="${it.id}" onclick="navigateTo('${it.id}')"><i class="bi ${it.icon}"></i><span>${E(it.label.replace('Pemesanan ', '').replace('Pembayaran Material', 'Bayar').replace('Presensi Harian', 'Presensi'))}</span></button>`;
+  const short = l => l.replace('Pemesanan ', '').replace('Pembayaran Material', 'Bayar').replace('Presensi Harian', 'Presensi').replace('Program Kerja', 'Program');
+  const navBtn = it => `<button class="bn-item" data-nav="${it.id}" onclick="navigateTo('${it.id}')"><i class="bi ${it.icon}"></i><span>${E(short(it.label))}</span></button>`;
   if (isStaff()) {
-    const pick = ['dashboard', 'presensi', 'material'].filter(p => have.has(p)).map(id => m.find(x => x.id === id));
-    $('#bottomNav').innerHTML = pick.slice(0, 2).map(navBtn).join('') + '<button class="bn-item bn-cam" onclick="cameraStart()" aria-label="Ambil foto program kerja"><span class="bn-cam-c"><i class="bi bi-camera-fill"></i></span><span>Foto</span></button>' + pick.slice(2).map(navBtn).join('') + '<button class="bn-item" onclick="openDrawer()"><i class="bi bi-list"></i><span>Menu</span></button>';
-  } else
-  $('#bottomNav').innerHTML = bn.map(it => `<button class="bn-item" data-nav="${it.id}" onclick="navigateTo('${it.id}')"><i class="bi ${it.icon}"></i><span>${E(it.label.replace('Pemesanan ', '').replace('Pembayaran Material', 'Bayar').replace('Presensi Harian', 'Presensi'))}</span></button>`).join('') + `<button class="bn-item" onclick="openDrawer()"><i class="bi bi-list"></i><span>Menu</span></button>`;
+    const pick = ['dashboard', 'presensi', 'program'].filter(p => have.has(p)).map(id => m.find(x => x.id === id));
+    $('#bottomNav').innerHTML = pick.slice(0, 2).map(navBtn).join('') + '<button class="bn-item bn-cam" onclick="cameraStart()" aria-label="Ambil foto program kerja"><span class="bn-cam-c"><i class="bi bi-camera-fill"></i></span><span>Foto</span></button>' + pick.slice(2).map(navBtn).join('') + '<button class="bn-item" onclick="openDrawer()"><i class="bi bi-grid"></i><span>Menu</span></button>';
+  } else $('#bottomNav').innerHTML = bn.map(navBtn).join('') + `<button class="bn-item" onclick="openDrawer()"><i class="bi bi-grid"></i><span>Menu</span></button>`;
   $('#tbActions').innerHTML = isStaff() ? `<button class="btn-x btn-g btn-sm hide-m" onclick="orderForm()"><i class="bi bi-plus-lg"></i> Ajukan Material</button><button class="btn-x btn-p btn-sm hide-m" onclick="navigateTo('presensi')"><i class="bi bi-person-check"></i> Input Presensi</button>` : '';
   renderCutoff();
+  applySide();
+  tabsLoad(); renderTabs();
+  installRefresh();
 }
 function renderCutoff() {
   const el = $('#cutoffCard');
@@ -311,6 +332,149 @@ function renderCutoff() {
 function setActiveNav(id) {
   $$('[data-nav]').forEach(b => b.classList.toggle('active', b.dataset.nav === id));
   const it = AppState.menu.find(x => x.id === id); $('#pageTitle').textContent = it ? it.label : 'SIMOP';
+  tabsSync(id);
+}
+function applySide() { let mini = false; try { mini = localStorage.getItem('simop-side') === 'mini'; } catch (e) { } document.body.classList.toggle('side-mini', mini); }
+function toggleSide() {
+  const mini = !document.body.classList.contains('side-mini');
+  document.body.classList.toggle('side-mini', mini);
+  try { localStorage.setItem('simop-side', mini ? 'mini' : ''); } catch (e) { }
+}
+
+const TABS = { list: [], act: '' };
+const tabsKey = () => 'simop-tabs:' + (AppState.user ? AppState.user.username : '');
+function tabsLoad() {
+  let o = null; try { o = JSON.parse(localStorage.getItem(tabsKey()) || 'null'); } catch (e) { o = null; }
+  const ok = id => AppState.menu.some(x => x.id === id);
+  TABS.list = o && Array.isArray(o.list) ? o.list.filter(t => t && t.id && ok(t.page)).slice(0, 8) : [];
+  if (!TABS.list.length) TABS.list = [{ id: 't' + Date.now(), page: 'dashboard' }];
+  TABS.act = o && TABS.list.some(t => t.id === o.act) ? o.act : TABS.list[0].id;
+}
+function tabsSave() { try { localStorage.setItem(tabsKey(), JSON.stringify(TABS)); } catch (e) { } }
+const tabCur = () => TABS.list.find(t => t.id === TABS.act) || TABS.list[0];
+function tabsSync(page) { const t = tabCur(); if (!t) return; if (t.page !== page) { t.page = page; tabsSave(); } renderTabs(); }
+function renderTabs() {
+  const bar = $('#tabBar'); if (!bar || !AppState.user) return;
+  const one = TABS.list.length === 1;
+  bar.innerHTML = TABS.list.map(t => {
+    const m = AppState.menu.find(x => x.id === t.page) || { label: 'Halaman', icon: 'bi-window' }, on = t.id === TABS.act;
+    return `<div class="tab${on ? ' on' : ''}" role="tab" tabindex="${on ? 0 : -1}" aria-selected="${on}" data-tab="${t.id}" title="${E(m.label)}"><i class="bi ${m.icon} ti" aria-hidden="true"></i><span class="tl">${E(m.label)}</span>${one ? '' : `<button type="button" class="tx" data-tclose="${t.id}" aria-label="Tutup tab ${E(m.label)}" tabindex="-1"><i class="bi bi-x-lg"></i></button>`}</div>`;
+  }).join('') + (TABS.list.length < 8 ? '<button type="button" class="tab-add" id="tabAdd" aria-label="Buka tab baru" title="Tab baru (tekan lama / klik kanan untuk pilih halaman)"><i class="bi bi-plus-lg"></i></button>' : '');
+  const pg = $('#app-container'); if (pg) pg.classList.toggle('first-tab', !!TABS.list[0] && TABS.list[0].id === TABS.act);
+  const on = bar.querySelector('.tab.on');
+  if (on && (on.offsetLeft < bar.scrollLeft || on.offsetLeft + on.offsetWidth > bar.scrollLeft + bar.clientWidth)) bar.scrollLeft = Math.max(0, on.offsetLeft - 40);
+}
+function tabSelect(id) {
+  if (id === TABS.act) return;
+  TABS.act = id; tabsSave();
+  navigateTo(tabCur().page);
+}
+function tabOpen(page) {
+  if (TABS.list.length >= 8) return toast('Maksimal 8 tab. Tutup salah satu tab dulu.', '');
+  const t = { id: 't' + Date.now() + Math.floor(Math.random() * 99), page: page || 'dashboard' };
+  const i = TABS.list.findIndex(x => x.id === TABS.act);
+  TABS.list.splice(i + 1, 0, t); TABS.act = t.id; tabsSave();
+  navigateTo(t.page);
+}
+function tabClose(id) {
+  if (TABS.list.length <= 1) return;
+  const i = TABS.list.findIndex(t => t.id === id); if (i < 0) return;
+  TABS.list.splice(i, 1);
+  if (TABS.act === id) { TABS.act = (TABS.list[i] || TABS.list[i - 1]).id; tabsSave(); navigateTo(tabCur().page); }
+  else { tabsSave(); renderTabs(); }
+}
+function tabKeep(fn) {
+  const keep = TABS.list.filter(fn);
+  if (!keep.length) return;
+  TABS.list = keep;
+  if (!keep.some(t => t.id === TABS.act)) { TABS.act = keep[0].id; tabsSave(); navigateTo(tabCur().page); } else { tabsSave(); renderTabs(); }
+}
+function tabMenuClose() { const m = $('#tabMenu'); if (m) m.remove(); }
+function tabMenuShow(html, x, y) {
+  tabMenuClose();
+  const m = document.createElement('div'); m.className = 'tab-menu'; m.id = 'tabMenu'; m.setAttribute('role', 'menu'); m.innerHTML = html;
+  document.body.appendChild(m);
+  const w = m.offsetWidth, h = m.offsetHeight;
+  m.style.left = Math.max(8, Math.min(x, innerWidth - w - 8)) + 'px'; m.style.top = Math.max(8, Math.min(y, innerHeight - h - 8)) + 'px';
+  const b = m.querySelector('button'); if (b) b.focus();
+  setTimeout(() => { document.addEventListener('pointerdown', function off(e) { if (!m.contains(e.target)) { tabMenuClose(); document.removeEventListener('pointerdown', off, true); } }, true); }, 0);
+}
+function tabQuickMenu(btn) {
+  const r = btn.getBoundingClientRect();
+  tabMenuShow('<div class="tm-h">Buka di tab baru</div>' + AppState.menu.map(m => `<button type="button" role="menuitem" onclick="tabMenuClose();tabOpen('${m.id}')"><i class="bi ${m.icon}"></i>${E(m.label)}</button>`).join(''), r.left, r.bottom + 6);
+}
+function tabCtx(id, x, y) {
+  const i = TABS.list.findIndex(t => t.id === id), n = TABS.list.length;
+  tabMenuShow(`<button type="button" role="menuitem" onclick="tabMenuClose();tabOpen((TABS.list.find(t=>t.id==='${id}')||{}).page)"><i class="bi bi-copy"></i>Duplikat tab</button>` +
+    (n > 1 ? `<button type="button" role="menuitem" onclick="tabMenuClose();tabClose('${id}')"><i class="bi bi-x-lg"></i>Tutup tab</button><button type="button" role="menuitem" onclick="tabMenuClose();tabKeep(t=>t.id==='${id}')"><i class="bi bi-x-square"></i>Tutup tab lain</button>` : '') +
+    (i < n - 1 ? `<button type="button" role="menuitem" onclick="tabMenuClose();tabKeep((t,k)=>k<=${i})"><i class="bi bi-chevron-bar-right"></i>Tutup tab di kanan</button>` : '') +
+    (i > 0 ? `<button type="button" role="menuitem" onclick="tabMenuClose();tabKeep((t,k)=>k>=${i})"><i class="bi bi-chevron-bar-left"></i>Tutup tab di kiri</button>` : ''), x, y);
+}
+(function tabEvents() {
+  const bar = document.getElementById('tabBar'); if (!bar) return;
+  let drag = null, swallow = 0, holdT = 0;
+  bar.addEventListener('click', e => {
+    if (Date.now() < swallow) return;
+    const x = e.target.closest('[data-tclose]'); if (x) { e.stopPropagation(); tabClose(x.dataset.tclose); return; }
+    const add = e.target.closest('#tabAdd'); if (add) { tabOpen('dashboard'); return; }
+    const t = e.target.closest('[data-tab]'); if (t) tabSelect(t.dataset.tab);
+  });
+  bar.addEventListener('contextmenu', e => {
+    const add = e.target.closest('#tabAdd'); if (add) { e.preventDefault(); tabQuickMenu(add); return; }
+    const t = e.target.closest('[data-tab]'); if (!t) return; e.preventDefault(); tabCtx(t.dataset.tab, e.clientX, e.clientY);
+  });
+  bar.addEventListener('auxclick', e => { const t = e.target.closest('[data-tab]'); if (e.button === 1 && t) { e.preventDefault(); tabClose(t.dataset.tab); } });
+  bar.addEventListener('keydown', e => {
+    const t = e.target.closest('[data-tab]'); if (!t) return;
+    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); tabSelect(t.dataset.tab); }
+    else if (e.key === 'Delete') { e.preventDefault(); tabClose(t.dataset.tab); }
+    else if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') { e.preventDefault(); const n = e.key === 'ArrowRight' ? t.nextElementSibling : t.previousElementSibling; if (n && n.dataset.tab) n.focus(); }
+  });
+  bar.addEventListener('pointerdown', e => {
+    const add = e.target.closest('#tabAdd');
+    if (add && e.pointerType === 'touch') { holdT = setTimeout(() => { swallow = Date.now() + 600; tabQuickMenu(add); }, 480); return; }
+    const t = e.target.closest('[data-tab]');
+    if (!t || e.button !== 0 || e.target.closest('[data-tclose]') || e.pointerType === 'touch') return;
+    drag = { id: t.dataset.tab, x: e.clientX, on: false };
+  });
+  window.addEventListener('pointerup', () => { clearTimeout(holdT); if (drag && drag.on) { swallow = Date.now() + 250; tabsSave(); renderTabs(); } drag = null; });
+  window.addEventListener('pointermove', e => {
+    if (!drag) return;
+    if (!drag.on && Math.abs(e.clientX - drag.x) < 8) return;
+    drag.on = true;
+    const tabs = $$('.tab', bar), from = TABS.list.findIndex(t => t.id === drag.id);
+    let to = tabs.findIndex(el => { const r = el.getBoundingClientRect(); return e.clientX < r.left + r.width / 2; });
+    if (to < 0) to = tabs.length - 1; else if (to > from) to--;
+    if (to !== from && to >= 0) { const [it] = TABS.list.splice(from, 1); TABS.list.splice(to, 0, it); renderTabs(); }
+    const el = bar.querySelector(`[data-tab="${drag.id}"]`); if (el) el.classList.add('drag');
+  });
+})();
+
+let deferredInstall = null;
+window.addEventListener('beforeinstallprompt', e => { e.preventDefault(); deferredInstall = e; installRefresh(); });
+window.addEventListener('appinstalled', () => { deferredInstall = null; installRefresh(); toast('SIMOP sudah terpasang. Buka dari ikon di layar utama.', 'ok'); });
+const isStandalone = () => { try { return matchMedia('(display-mode: standalone)').matches || navigator.standalone === true; } catch (e) { return false; } };
+const isIOS = () => /iphone|ipad|ipod/i.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+function installRefresh() {
+  const b = document.getElementById('installBtn'); if (!b) return;
+  let coarse = false; try { coarse = matchMedia('(pointer:coarse)').matches; } catch (e) { }
+  b.hidden = isStandalone() || !(deferredInstall || coarse);
+}
+async function installApp() {
+  if (deferredInstall) {
+    const ev = deferredInstall; deferredInstall = null;
+    ev.prompt();
+    try { const r = await ev.userChoice; if (r && r.outcome === 'accepted') toast('Memasang SIMOP\u2026', 'ok'); } catch (e) { }
+    installRefresh(); return;
+  }
+  const step = (n, t) => `<div class="ios-step"><b class="n">${n}</b><div>${t}</div></div>`;
+  openModal({
+    title: 'Pasang SIMOP di layar utama HP',
+    body: isIOS()
+      ? step(1, 'Buka alamat SIMOP di <b>Safari</b>.') + step(2, 'Ketuk tombol <b>Bagikan</b> <i class="bi bi-box-arrow-up"></i> di bagian bawah layar.') + step(3, 'Pilih <b>Tambah ke Layar Utama</b>, lalu ketuk <b>Tambah</b>.') + step(4, 'Buka SIMOP dari ikon baru di layar utama. Tampilannya penuh seperti aplikasi.')
+      : step(1, 'Buka alamat SIMOP di <b>Google Chrome</b>.') + step(2, 'Ketuk menu <b>\u22EE</b> (titik tiga) di kanan atas.') + step(3, 'Pilih <b>Instal aplikasi</b> atau <b>Tambahkan ke layar utama</b>.') + step(4, 'Buka SIMOP dari ikon baru di layar utama.'),
+    footer: '<button class="btn-x btn-p" data-bs-dismiss="modal">Mengerti</button>'
+  });
 }
 const PAGE_KEYS = {};
 function pageKeys(id) {
@@ -329,6 +493,7 @@ function isTyping() {
 }
 function uiBusy() {
   return (AppState.uiDirty && Date.now() - (AppState.lastAct || 0) < 1500) || isTyping() || document.body.classList.contains('modal-open') || document.body.classList.contains('drawer-open') ||
+    document.body.classList.contains('vw-open') || !!KB.drag || !!document.querySelector('.kb-new') || (AppState.page === 'dashboard' && S.wg && S.wg.edit) ||
     (AppState.page === 'presensi' && S.pres && S.pres.changed && Object.keys(S.pres.changed).length > 0);
 }
 async function repaintFromCache() {
@@ -517,7 +682,7 @@ function bootHtml() {
   const arcs = [1, 2, 3, 4, 5, 6].map(i => `<span class="arc a${i}"></span>`).join('');
   return `<div class="boot" role="status" aria-live="polite" aria-label="Memuat aplikasi"><div class="boot-stage">${arcs}<div class="boot-logo">${logoImg()}</div></div></div>`;
 }
-const NEED_BUILD = 20261003;
+const NEED_BUILD = 20261022;
 function buildCheck(cfg) {
   const b = Number(cfg && cfg.build || 0), old = $('#buildWarn');
   if (b >= NEED_BUILD) { if (old) old.remove(); return; }
@@ -531,7 +696,10 @@ function applySession(d) {
   saveSessInfo(d); dcLoad(); buildCheck(d.config);
   if (d.boot) { Object.keys(d.boot).forEach(k => { DC.mem[k] = { t: Date.now(), d: d.boot[k] }; }); dcSave(); }
   document.body.classList.remove('auth-mode'); renderShell();
-  navigateTo('dashboard').then(() => setTimeout(() => { prefetchMenus().catch(() => { }); }, 700));
+  let go = ''; try { go = new URLSearchParams(location.search).get('go') || ''; } catch (e) { }
+  const first = go && AppState.menu.some(m => m.id === go) ? go : (tabCur() ? tabCur().page : 'dashboard');
+  if (go) try { history.replaceState(null, '', location.pathname); } catch (e) { }
+  navigateTo(first).then(() => setTimeout(() => { prefetchMenus().catch(() => { }); }, 700));
 }
 function storeBrowserPassword(u, p) {
   try { if (window.PasswordCredential && navigator.credentials) navigator.credentials.store(new PasswordCredential({ id: u, password: p, name: u })).catch(() => { }); } catch (e) { }
@@ -550,6 +718,7 @@ function doLoginUI(btn) {
     }, e => { loader(-1); btn.classList.remove('busy'); err.className = 'err-box'; err.textContent = e.message || 'Koneksi gagal. Periksa jaringan lalu coba lagi.'; });
 }
 function resetState() {
+  UPQ.jobs = []; upPaint(); AppState.full = {}; viewerClose(); tabMenuClose();
   clearToken(); dcClear(); DC.user = ''; [localStorage, sessionStorage].forEach(st => { try { st.removeItem('simop-ss'); } catch (e) { } }); AppState.token = null; AppState.user = null; AppState.menu = []; AppState.img = {}; Object.keys(S).forEach(k => delete S[k]); }
 function forceLogout(msg) { if (!AppState.token) return; resetState(); showLogin(msg || 'Sesi berakhir. Silakan masuk kembali.'); }
 function logout() {
@@ -565,10 +734,6 @@ function openPwModal() {
 }
 
 document.addEventListener('click', e => {
-  const fd = e.target.closest('[data-fdel]');
-  if (fd) { e.stopPropagation(); deleteSlot(fd.dataset.pid, fd.dataset.slot, fd.dataset.lbl, fd.closest('.slot')); return; }
-  const up = e.target.closest('[data-upload]');
-  if (up) { e.stopPropagation(); uploadSlot(up.dataset.pid, up.dataset.slot, up.closest('.slot') || up); return; }
   const pv = e.target.closest('[data-preview]');
   if (pv) previewFile(pv.dataset.preview, pv.dataset.title);
 });
@@ -634,9 +799,9 @@ const hk = x => String(x).replace('.', ',');
 
 PAGES.dashboard = async function () {
   const d = await api('dash.get');
-  S.dash = { d: d, bagian: 'Semua' }; S.dashProg = S.dashProg || 'ini';
+  S.dash = { d: d };
   if (d.role === 'toko') return dashToko(d);
-  return { html: dashStaff(d), init: c => loadThumbs(c) };
+  return { html: dashStaff(d), init: dashInit };
 };
 
 function exportRekap(jenis, start, btn) {
@@ -651,120 +816,228 @@ function kpi(cls, label, icon, num, sub, extra) {
   return `<div class="kpi ${cls || ''}"><div class="kpi-l"><span>${label}</span><i class="bi ${icon}"></i></div><div class="kpi-num">${num}</div><div class="kpi-s">${sub || ''}</div>${extra || ''}</div>`;
 }
 
+const KOL_LBL = { Direncanakan: 'Program Kerja', Berjalan: 'Proses', Selesai: 'Hasil Usaha' };
+const WG_DEF = {
+  hadir: { t: 'Kehadiran pekerja', i: 'bi-people-fill', c: 'g', size: 'lg', sizes: ['lg', 'tall', 'wide', 'sm'] },
+  keuangan: { t: 'Keuangan TS & Proyek', i: 'bi-wallet2', c: 'w', size: 'wide', sizes: ['wide', 'lg', 'tall', 'sm'] },
+  piket: { t: 'Piket hari ini', i: 'bi-clipboard-check', c: '', size: 'sm', sizes: ['sm', 'tall', 'wide'] },
+  armada: { t: 'Armada', i: 'bi-truck', c: '', size: 'sm', sizes: ['sm', 'tall', 'wide'] },
+  material: { t: 'Material hari ini', i: 'bi-box-seam', c: 'w', size: 'full', sizes: ['full', 'lg', 'wide', 'tall'] },
+  galeri: { t: 'Galeri program kerja', i: 'bi-images', c: 'v', size: 'xl', sizes: ['xl', 'full', 'lg'] },
+  aktivitas: { t: 'Log aktivitas', i: 'bi-activity', c: '', size: 'tall', sizes: ['tall', 'lg', 'wide'], hide: true }
+};
+const WG_ORDER = ['hadir', 'keuangan', 'piket', 'armada', 'material', 'galeri', 'aktivitas'];
+const SIZE_LBL = { sm: 'kecil', wide: 'lebar', tall: 'tinggi', lg: 'besar', full: 'selebar layar', xl: 'selebar layar (tinggi)' };
+const wgKey = () => 'simop-wg:' + (AppState.user ? AppState.user.username : '');
+function wgLayout() {
+  let o = null; try { o = JSON.parse(localStorage.getItem(wgKey()) || 'null'); } catch (e) { o = null; }
+  const list = [], seen = {};
+  (o && Array.isArray(o.list) ? o.list : []).forEach(x => { const f = x && WG_DEF[x.id]; if (f && !seen[x.id]) { seen[x.id] = 1; list.push({ id: x.id, size: f.sizes.indexOf(x.size) >= 0 ? x.size : f.size, hide: !!x.hide }); } });
+  WG_ORDER.forEach(id => { if (!seen[id]) list.push({ id: id, size: WG_DEF[id].size, hide: !!WG_DEF[id].hide }); });
+  return list;
+}
+function wgSave(list) { try { localStorage.setItem(wgKey(), JSON.stringify({ list: list })); } catch (e) { } }
+const emptyMini = t => `<div class="muted" style="font-size:12.5px;padding:.35rem 0">${E(t)}</div>`;
+const fdShort = s => { if (!s || !/^\d{4}-\d{2}-\d{2}/.test(s)) return ''; const t = new Date(parseD(s)); return t.getUTCDate() + ' ' + BLN[t.getUTCMonth()]; };
+
 function dashStaff(d) {
-  const p = d.presensi, pr = d.periode;
-  const keluar = d.armada.find(a => a.Status !== 'Ada');
-  const kosong = d.subKosong;
-  const shiftLbl = p.shiftAktif === 'pagi' ? 'Shift Pagi' : p.shiftAktif === 'siang' ? 'Shift Siang' : 'Total hadir';
-  const head = `
-  <div class="page-head">
-    <div>
-      <div class="row-f gap1 wrap" style="margin-bottom:.5rem"><span class="pill pill-ok"><i class="bi bi-database-check"></i> Database Gontor 3 aktif</span><span class="pill pill-info"><i class="bi bi-calendar-range"></i> Siklus ${fdate(pr.start)} \u2013 ${fdate(pr.end)}</span></div>
-      <h1>Ahlan wa Sahlan, ${E(AppState.user.nama)}</h1>
-      <p>Pusat pengawasan operasional lapangan, presensi tukang, dan administrasi logistik harian.</p>
-      <div class="row-f gap1 wrap hide-m mt2">
-        <button class="btn-x btn-o btn-sm" onclick="navigateTo('presensi')"><i class="bi bi-person-check"></i> Catat presensi</button>
-        <button class="btn-x btn-o btn-sm" onclick="orderForm()"><i class="bi bi-cart-plus"></i> Pesan material</button>
-        <button class="btn-x btn-p btn-sm" onclick="programForm()"><i class="bi bi-plus-lg"></i> Program kerja</button>
-      </div>
-    </div>
-    <aside class="act-mini" aria-label="Log aktivitas">
-      <div class="act-mini-h"><b><i class="bi bi-activity"></i> Log aktivitas</b><select class="inp" id="actF" aria-label="Filter waktu log" onchange="S.actF=this.value;paintAct()">${[['hari', 'Hari ini'], ['7', '7 hari'], ['30', '30 hari'], ['semua', 'Semua']].map(o => `<option value="${o[0]}"${(S.actF || 'hari') === o[0] ? ' selected' : ''}>${o[1]}</option>`).join('')}</select></div>
-      <div id="actList" class="act-mini-b">${aktivitasHtml(filterAct(d.aktivitas))}</div>
-    </aside>
-  </div>
-  <div class="quick only-m" aria-label="Aksi cepat">
-    <button onclick="navigateTo('presensi')"><span class="ico g"><i class="bi bi-person-check"></i></span>+ Presensi</button>
-    <button onclick="orderForm()"><span class="ico"><i class="bi bi-cart-plus"></i></span>+ Pesan</button>
-    <button onclick="programForm()"><span class="ico w"><i class="bi bi-kanban"></i></span>+ Program</button>
-    <button onclick="navigateTo('rekapmat')"><span class="ico r"><i class="bi bi-file-earmark-spreadsheet"></i></span>Rekapan</button>
-  </div>`;
-  const kpis = `<div class="kpi-grid">
-    ${kpi('green', shiftLbl + ' hari ini', 'bi-arrow-up-right', `${p.utama}<small>/${p.total}</small>`, `Pagi: ${p.pagi} | Siang: ${p.siang}`, `<div class="kpi-s">${p.izin} izin resmi \u00B7 ${p.ghoib} ghoib${p.belumInput ? ' \u00B7 ' + p.belumInput + ' belum diinput' : ''}</div>`)}
-    ${kpi('', 'Piket staf hari ini', 'bi-clipboard-check', d.piket.length, d.piket.length ? E(d.piket.slice(0, 3).map(x => x.StaffNama.replace(/^Ust\.\s{0,}/, '')).join(', ')) : 'Belum dijadwalkan')}
-    ${kpi('', 'Status armada', 'bi-truck', `${d.armadaSiaga}<small>/${d.armada.length}</small>`, keluar ? E(keluar.Kendaraan + ': ' + (keluar.Tujuan || 'sedang digunakan')) : 'Semua armada siaga')}
-    ${kpi('', 'Tagihan Toko KUK', 'bi-receipt', `<span style="font-size:22px">${Rp(d.tagihan.total)}</span>`, `${d.tagihan.nota} nota menunggu`)}
-    ${kpi(kosong.length ? 'warn' : '', 'Tambal Sulam kosong', 'bi-exclamation-triangle', kosong.length, kosong.length ? E(kosong.slice(0, 2).map(x => x.Nama.replace(/\s*\(.*\)/, '')).join(', ')) : 'Semua sub-bagian terisi')}
-  </div>`;
-  const banner = kosong.length ? `<div class="banner" role="alert"><i class="bi bi-exclamation-triangle-fill"></i><div class="grow"><b>${kosong.length} sub-bagian Tambal Sulam belum mengisi program kerja</b><div class="t2">${E(kosong.map(x => x.Nama).join(', '))} belum menetapkan alokasi tenaga kerja dan material.</div></div><button class="btn-x btn-w btn-sm" onclick="programKosong()">Tetapkan sekarang</button></div>` : '';
-  const izinTbl = (() => {
-    const grp = (st, cls) => { const nm = d.izinList.filter(x => x.status === st).map(x => x.nama); return `<div class="nm-grp"><span class="pill pill-${cls}">${st} (${nm.length})</span><div class="nm-list">${nm.length ? nm.map(n => `<span>${E(n)}</span>`).join('') : '<span class="muted">\u2013</span>'}</div></div>`; };
-    return `<div id="tbIzinHari">${grp('Ghoib', 'bad')}${grp('Izin', 'warn')}</div>`;
-  })();
-  const progGroup = bagian => dashProgGroupHtml(bagian);
-  const matGroup = bagian => `<div class="grp grp-${bagian === 'Tambal Sulam' ? 'ts' : 'pr'}" id="dmg_${bagian.replace(/\s/g, '')}">${dashMatInner(bagian)}</div>`;
-  const piket = d.piket.map(x => `<div class="li"><span class="avatar">${E(initials(x.StaffNama))}</span><div class="grow"><div class="t">${E(x.StaffNama)}</div></div></div>`).join('') || emptyBox('Belum ada jadwal piket', 'Atur di menu Piket Staff.');
-  const keuCard = k => `<div class="li" style="flex-direction:column;align-items:stretch;gap:.5rem"><div class="row-f between">${badge(k.bagian, k.bagian === 'Tambal Sulam' ? 'ts' : 'brand')}<b class="num">${Rp(k.total)}</b></div><div class="row-f between" style="font-size:12px"><span class="muted">Minggu terakhir${k.terakhir ? ' (M-' + k.terakhir.mingguKe + ')' : ''}</span><b class="num">${k.terakhir ? Rp(k.terakhir.nominal) : '\u2013'}</b></div><div class="muted" style="font-size:12px">Rekapitulasi Minggu ke-${k.dari || 0} s.d. Minggu ke-${k.ke || 0}</div></div>`;
-  const ins = d.insights.length ? `<section class="card-x"><div class="card-h" style="margin-bottom:.5rem"><div class="row-f gap2"><div class="ico"><i class="bi bi-stars"></i></div><div><h2>Ringkasan hari ini</h2><p>Dihitung otomatis dari data presensi, material, dan armada.</p></div></div></div><ul style="margin:0;padding-left:1.1rem;display:grid;gap:.375rem">${d.insights.map(t => `<li>${E(t)}</li>`).join('')}</ul></section>` : '';
-  return head + kpis + banner + `
-  <div class="stack">
-    ${ins}
-    <section class="card-x">
-      <div class="card-h"><div class="row-f gap2"><div class="ico g"><i class="bi bi-clock-history"></i></div><div><h2>Presensi &amp; perizinan pekerja</h2><p>${shiftLbl}: ${p.utama} dari ${p.total} pekerja hadir \u00B7 ${p.izin} izin \u00B7 ${p.ghoib} ghoib</p></div></div></div>
-      ${izinTbl}
-    </section>
-    <section class="card-x">
-      <div class="card-h"><div class="row-f gap2"><div class="ico"><i class="bi bi-kanban"></i></div><div><h2>Program kerja &amp; triad dokumentasi</h2><p>Maksimal 4 program terbaru per bagian sesuai filter</p></div></div><div class="row-f gap1"><button class="btn-x btn-o btn-sm" onclick="navigateTo('program')">Semua program</button><button class="btn-x btn-p btn-sm" onclick="programForm()"><i class="bi bi-plus-lg"></i> Tambah</button></div></div>
-      <div class="chips mb2" role="group" aria-label="Filter periode program">${[['ini', 'Minggu ini'], ['lalu', 'Minggu lalu'], ['bulan', 'Bulan ini'], ['semua', 'Semua']].map(o => `<button class="chip-f ${S.dashProg === o[0] ? 'on' : ''}" data-dp="${o[0]}" onclick="setDashProg('${o[0]}')">${o[1]}</button>`).join('')}</div>
-      <div id="dashProgs">${progGroup('Tambal Sulam')}${progGroup('Proyek')}</div>
-    </section>
-    <section class="card-x">
-      <div class="card-h"><div class="row-f gap2"><div class="ico w"><i class="bi bi-cart3"></i></div><div><h2>Log pemesanan material</h2><p>Dikelompokkan per bagian</p></div></div><div class="row-f gap1"><select class="inp inp-sm" id="matF" aria-label="Filter waktu pesanan" onchange="S.matF=this.value;paintDashMat()">${[['hari', 'Hari ini'], ['7', '7 hari'], ['30', '30 hari'], ['semua', 'Semua']].map(o => `<option value="${o[0]}"${(S.matF || 'hari') === o[0] ? ' selected' : ''}>${o[1]}</option>`).join('')}</select><button class="btn-x btn-g btn-sm" onclick="orderForm()"><i class="bi bi-cart-plus"></i><span class="hide-m"> Pesan ke Toko KUK</span></button></div></div>
-      ${matGroup('Tambal Sulam')}${matGroup('Proyek')}
-    </section>
-    <div class="two">
-      <section class="card-x"><div class="card-h"><div class="row-f gap2"><div class="ico g"><i class="bi bi-clipboard-check"></i></div><div><h2>Piket staf hari ini</h2><p>${fdate(d.tanggal, 1)}</p></div></div></div>${piket}</section>
-      <section class="card-x"><div class="card-h"><div class="row-f gap2"><div class="ico w"><i class="bi bi-wallet2"></i></div><div><h2>Keuangan per bagian</h2><p>Dari laporan mingguan manual</p></div></div><button class="btn-x btn-o btn-sm" onclick="navigateTo('keuangan')">Detail</button></div>${d.keuangan.map(keuCard).join('')}</section>
-    </div>
-  </div>`;
+  S.wg = S.wg || { edit: false };
+  const lay = wgLayout(), m = d.minggu || { ts: {}, pr: {} }, nama = String(AppState.user.nama || '');
+  return `<div class="dh fade-in"><div><h1>Ahlan wa Sahlan, <span>${E(nama)}</span></h1><p>${fdate(d.tanggal, 1)} \u00B7 Tambal Sulam minggu ke-${m.ts.no || '\u2013'} \u00B7 Proyek minggu ke-${m.pr.no || '\u2013'} \u00B7 siklus ${fdate(d.periode.start)} \u2013 ${fdate(d.periode.end)}</p></div>
+    <div class="dh-acts"><button class="btn-x btn-o btn-sm hide-m" onclick="navigateTo('presensi')"><i class="bi bi-person-check"></i> Presensi</button><button class="btn-x btn-o btn-sm" onclick="orderForm()"><i class="bi bi-cart-plus"></i> Pesan material</button><button class="btn-x btn-o btn-sm" onclick="programForm()"><i class="bi bi-plus-lg"></i> Program</button><button class="btn-x ${S.wg.edit ? 'btn-p' : 'btn-o'} btn-sm" id="wgEditBtn" onclick="wgToggleEdit()" aria-pressed="${S.wg.edit}"><i class="bi ${S.wg.edit ? 'bi-check2' : 'bi-grid-3x3-gap'}"></i> ${S.wg.edit ? 'Selesai mengatur' : 'Atur widget'}</button></div></div>
+  <div id="wgBar">${S.wg.edit ? wgBarHtml(lay) : ''}</div>
+  <div class="wg-grid${S.wg.edit ? ' edit' : ''}" id="wgGrid">${lay.filter(w => !w.hide).map(w => wgHtml(w, d)).join('')}</div>`;
 }
-function dashMatInner(bagian) {
-  const all = (S.dash.d.materialByBagian.find(x => x.bagian === bagian) || { items: [] }).items, f = S.matF || 'hari', t = todayStr();
-  const from = f === 'semua' ? '' : f === 'hari' ? t : addD(t, -(Number(f) - 1));
-  const list = all.filter(m => !from || m.Tanggal >= from);
-  return `<div class="grp-h">${E(bagian.toUpperCase())}<span class="pill">${list.length} pesanan</span></div><div class="grp-b dm-scroll">${tableHtml('tbMat' + bagian.replace(/\s/g, ''), [
-    { l: 'Nama barang', c: 'c-nm', f: r => `<b>${E(r.Material)}</b><span class="sub">${fdate(r.Tanggal)}<span class="only-xs"> \u00B7 ${num(r.Jumlah)} ${E(r.Satuan || '')}</span> \u00B7 ${E(r.Tujuan)}</span>` },
-    { l: 'Jml', n: 1, c: 'c-jml', f: r => `${num(r.Jumlah)} <span class="muted">${E(r.Satuan || '')}</span>` },
-    { l: 'Total', n: 1, c: 'c-tot', f: r => `<b>${Rp(r.Total)}</b>` },
-    { l: 'Status', c: 'c-st', f: r => r.StatusBayar === 'Telah Dibayar' ? '<span class="pill pill-ok">Lunas</span>' : badge(r.StatusKirim) }
-  ], list, { cls: 'nostk tbl-slim tbl-mat tbl-dm', empty: 'Belum ada pesanan ' + bagian + ' pada rentang ini' })}</div>`;
+function wgBarHtml(lay) {
+  const hid = lay.filter(w => w.hide);
+  return `<div class="wg-bar"><i class="bi bi-arrows-move" style="color:var(--primary)"></i><span>Seret widget untuk memindah (di HP: tekan lama, lalu geser). <i class="bi bi-arrows-angle-expand"></i> mengubah ukuran, <i class="bi bi-eye-slash"></i> menyembunyikan.</span>${hid.length ? '<span class="muted">Tampilkan:</span>' + hid.map(w => `<button type="button" class="chip-add" onclick="wgShow('${w.id}')"><i class="bi bi-plus"></i> ${E(WG_DEF[w.id].t)}</button>`).join('') : ''}<span class="grow"></span><button type="button" class="chip-add" onclick="wgReset()"><i class="bi bi-arrow-counterclockwise"></i> Susunan bawaan</button></div>`;
 }
-function paintDashMat() { ['Tambal Sulam', 'Proyek'].forEach(b => { const el = $('#dmg_' + b.replace(/\s/g, '')); if (el) el.innerHTML = dashMatInner(b); }); }
-function filterAct(list) {
-  const f = S.actF || 'hari', t = todayStr();
-  if (f === 'semua') return list || [];
-  const from = f === 'hari' ? t : addD(t, -(Number(f) - 1));
-  return (list || []).filter(a => String(a.waktu).slice(0, 10) >= from);
+function wgHtml(w, d) {
+  const f = WG_DEF[w.id];
+  return `<section class="wg" data-wg="${w.id}" data-size="${w.size}" aria-label="${E(f.t)}"><div class="wg-tools"><button type="button" data-wsize title="Ubah ukuran (sekarang ${E(SIZE_LBL[w.size])})" aria-label="Ubah ukuran widget ${E(f.t)}"><i class="bi bi-arrows-angle-expand"></i></button><button type="button" data-whide title="Sembunyikan" aria-label="Sembunyikan widget ${E(f.t)}"><i class="bi bi-eye-slash"></i></button></div><div class="wg-h"><span class="wi ${f.c}"><i class="bi ${f.i}"></i></span><h3>${E(f.t)}</h3>${wgHead(w.id, d)}</div><div class="wg-b" id="wgb_${w.id}">${wgBody(w.id, d)}</div></section>`;
 }
-function paintAct() { const el = $('#actList'); if (el && S.dash) el.innerHTML = aktivitasHtml(filterAct(S.dash.d.aktivitas)); }
+function wgHead(id, d) {
+  const go = (pg, t) => `<button type="button" class="wa" onclick="navigateTo('${pg}')" title="${E(t)}" aria-label="${E(t)}"><i class="bi bi-arrow-up-right"></i></button>`;
+  if (id === 'hadir') return `<span class="wl">${fdShort(d.tanggal)}</span>` + go('presensi', 'Buka presensi');
+  if (id === 'keuangan') return go('keuangan', 'Buka laporan keuangan');
+  if (id === 'piket') return go('piket', 'Buka jadwal piket');
+  if (id === 'armada') return `<span class="wl">${d.armada.filter(a => a.Status === 'Ada').length}/${d.armada.length} siap</span>` + go('armada', 'Buka status armada');
+  if (id === 'material') return `<button type="button" class="wa" onclick="orderForm()" title="Pesan material" aria-label="Pesan material"><i class="bi bi-cart-plus"></i></button>` + go('material', 'Buka pemesanan');
+  if (id === 'galeri') return `<span class="wl hide-xs">${d.galeri.auto ? 'Foto terbaru' : d.galeri.items.length + ' program pilihan'}</span><button type="button" class="wa" onclick="galPick()" title="Pilih program untuk galeri" aria-label="Pilih program untuk galeri"><i class="bi bi-sliders"></i></button>`;
+  return '';
+}
+function wgBody(id, d) {
+  try { return ({ hadir: wHadir, keuangan: wKeu, piket: wPiket, armada: wArmada, material: wMat, galeri: wGaleri, aktivitas: wAkt })[id](d); }
+  catch (e) { return emptyMini('Data widget belum tersedia.'); }
+}
+function wHadir(d) {
+  const p = d.presensi, sh = p.shiftAktif === 'pagi' ? 'pagi' : 'siang', pct = p.total ? Math.round(p.hadir / p.total * 100) : 0;
+  const nm = (arr, extra) => arr.length ? arr.slice(0, 14).map(x => `<span>${E(x.nama)}${extra ? ` <em>${E(extra(x))}</em>` : ''}</span>`).join('') + (arr.length > 14 ? `<span class="muted">+${arr.length - 14} lainnya</span>` : '') : '<span class="muted">\u2013</span>';
+  return `<div class="hd-top"><div><div class="wg-sub">Shift ${sh} sedang berjalan</div><div class="wg-big">${p.hadir}<small> / ${p.total} hadir</small></div><div class="wg-sub">Pagi ${p.pagi} \u00B7 Siang ${p.siang}</div></div><div class="ring" style="--p:${pct}" role="img" aria-label="${pct} persen hadir"><b>${pct}%</b></div></div>
+    <div class="bars">${p.perBagian.map(b => `<div class="bar-r ${b.bagian === 'Tambal Sulam' ? 'ts' : ''}"><span>${E(b.bagian)}</span><span class="bt"><i style="width:${b.total ? Math.round(b.hadir / b.total * 100) : 0}%"></i></span><b class="num">${b.hadir}/${b.total}</b></div>`).join('')}</div>
+    <div class="absen"><div class="absen-r"><span class="pill pill-bad">Ghoib ${p.ghoib.length}</span><div class="nm">${nm(p.ghoib)}</div></div><div class="absen-r"><span class="pill pill-warn">Izin ${p.izin.length}</span><div class="nm">${nm(p.izin, x => x.jenis)}</div></div>${p.belum.length ? `<div class="absen-r"><span class="pill pill-muted">Belum ${p.belum.length}</span><div class="nm">${nm(p.belum)}</div></div>` : ''}</div>`;
+}
+function wPiket(d) {
+  if (!d.piket.length) return emptyMini('Belum ada jadwal piket hari ' + d.hari + '.');
+  return `<div class="wg-sub" style="margin-bottom:.45rem">Hari ${E(d.hari)}</div><div class="mini-l">${d.piket.map(n => `<div class="mini-i"><span class="av">${E(initials(n))}</span><span class="tx">${E(n)}</span></div>`).join('')}</div>`;
+}
+function wArmada(d) {
+  if (!d.armada.length) return emptyMini('Belum ada data armada.');
+  return d.armada.map(a => a.Status === 'Ada'
+    ? `<div class="car"><i class="bi bi-truck ci"></i><div class="tx">${E(a.Kendaraan)}<small>Ada di garasi</small></div><span class="pill pill-ok">Ada</span></div>`
+    : `<div class="car out"><i class="bi bi-truck ci"></i><div class="tx">${E(a.Kendaraan)}<small>Dipinjam ${E(a.Pengguna || '\u2013')}${a.Tujuan ? ' \u00B7 ' + E(a.Tujuan) : ''}${a.WaktuKeluar ? ' \u00B7 sejak ' + E(String(a.WaktuKeluar).slice(11, 16)) : ''}</small></div><span class="pill pill-warn">Keluar</span></div>`).join('');
+}
+function wKeu(d) {
+  return `<div class="keu-g">${d.keuangan.map(k => {
+    const pr = k.bagian === 'Proyek', mx = Math.max(1, ...k.riwayat.map(x => x.n));
+    return `<div class="keu-c ${pr ? 'pr' : ''}" title="Total Minggu ke-${k.dari || 0} s.d. ke-${k.ke || 0}"><small>${E(k.bagian.toUpperCase())} \u00B7 TOTAL</small><div class="v num">${Rp(k.total)}</div><div class="k"><span>Minggu lalu${k.lalu ? ' (M-' + k.lalu.no + ')' : ''}</span><b>${k.lalu ? Rp(k.lalu.n) : '\u2013'}</b></div><div class="k"><span>Minggu ini (M-${k.mingguIni})</span><b>${k.ini ? Rp(k.ini.n) : 'belum'}</b></div><div class="spark" aria-hidden="true">${k.riwayat.map(x => `<i style="height:${Math.max(14, Math.round(x.n / mx * 100))}%" title="M-${x.no}: ${Rp(x.n)}"></i>`).join('')}</div></div>`;
+  }).join('')}</div>`;
+}
+function wMat(d) {
+  const m = d.material;
+  const it = (x, ok) => `<div class="mat-i ${ok ? 'ok' : ''}"><span class="dot"></span><div class="tx"><b>${E(x.Material)}</b><small><span class="tag-b ${x.Bagian === 'Proyek' ? 'pr' : ''}">${x.Bagian === 'Proyek' ? 'PR' : 'TS'}</span>${E(x.Tujuan)}${ok ? (x.NamaPengirim ? ' \u00B7 dikirim ' + E(x.NamaPengirim) : '') : (x.DiinputOleh ? ' \u00B7 ' + E(x.DiinputOleh) : '') + (x.Tanggal !== d.tanggal ? ' \u00B7 ' + fdShort(x.Tanggal) : '')}</small></div><span class="q">${num(x.Jumlah)} ${E(x.Satuan || '')}</span></div>`;
+  return `<div class="mat-g"><div class="mat-col"><h4><i class="bi bi-hourglass-split" style="color:var(--warn-tx)"></i> Sedang dipesan <span class="pill pill-warn">${m.nDipesan}</span></h4><div class="ml">${m.dipesan.length ? m.dipesan.map(x => it(x, false)).join('') : emptyMini('Tidak ada pesanan yang menunggu.')}</div></div>
+    <div class="mat-col"><h4><i class="bi bi-check2-circle" style="color:var(--em-a)"></i> Sudah datang hari ini <span class="pill pill-ok">${m.nDatang}</span></h4><div class="ml">${m.datang.length ? m.datang.map(x => it(x, true)).join('') : emptyMini('Belum ada barang datang hari ini.')}</div></div></div>`;
+}
+const BT_PAT = ['b-a', 'b-b', 'b-c', 'b-d', 'b-a', 'b-b', 'b-c', 'b-b', 'b-a', 'b-d', 'b-c', 'b-b'];
+const galCover = p => p.foto.find(x => x.slot === 'After') || p.foto.find(x => x.slot === 'During') || p.foto[0];
+function wGaleri(d) {
+  const g = d.galeri;
+  if (!g.items.length) return `<div class="gal-empty"><div><i class="bi bi-images" style="font-size:32px;color:var(--primary);opacity:.5"></i><div class="mt1"><b>Belum ada foto program</b></div><div>Foto Before \u00B7 During \u00B7 After yang diunggah akan tampil di sini.</div></div></div>`;
+  return `<div class="bento">${g.items.map((p, i) => {
+    const c = galCover(p), u = c.th || c.url;
+    return `<button type="button" class="bt-i loading ${BT_PAT[i % BT_PAT.length]}" data-gal="${i}" data-thumb="${E(u)}" data-title="${E(p.Uraian)}" aria-label="Lihat foto ${E(p.Uraian)}"><span class="cnt" aria-hidden="true">${['Before', 'During', 'After'].map(s => `<span class="${p.foto.some(f => f.slot === s) ? 'on' : ''}">${s[0]}</span>`).join('')}</span><span class="ov"><b>${E(p.Uraian)}</b><small>${E(p.SubBagian)} \u00B7 ${E(KOL_LBL[p.Status] || p.Status)}</small></span></button>`;
+  }).join('')}</div>`;
+}
+function wAkt(d) { return aktivitasHtml(d.aktivitas); }
+function dashInit(c) {
+  loadThumbs(c);
+  const grid = $('#wgGrid', c); if (!grid) return;
+  grid.addEventListener('click', e => {
+    const tool = e.target.closest('[data-wsize],[data-whide]');
+    if (tool) { const id = tool.closest('.wg').dataset.wg; if (tool.hasAttribute('data-wsize')) wgCycle(id); else wgHide(id); return; }
+    if (S.wg && S.wg.edit) return;
+    const g = e.target.closest('[data-gal]'); if (g) galOpen(Number(g.dataset.gal));
+  });
+  wgDragBind(grid);
+}
+function wgRepaint() { if (AppState.page === 'dashboard' && S.dash && S.dash.d.role !== 'toko') paintPage({ html: dashStaff(S.dash.d), init: dashInit }, true); }
+function wgToggleEdit() { S.wg.edit = !S.wg.edit; wgRepaint(); if (!S.wg.edit) toast('Susunan widget disimpan di perangkat ini.', 'ok'); }
+const reduceMotion = () => { try { return matchMedia('(prefers-reduced-motion: reduce)').matches; } catch (e) { return false; } };
+function flip(container, sel, mutate) {
+  if (reduceMotion() || !Element.prototype.animate) { mutate(); return; }
+  const first = new Map($$(sel, container).map(el => [el, el.getBoundingClientRect()]));
+  mutate();
+  $$(sel, container).forEach(el => {
+    const a = first.get(el), b = el.getBoundingClientRect();
+    if (!a) { el.animate([{ opacity: 0, transform: 'scale(.96)' }, { opacity: 1, transform: 'none' }], { duration: 260, easing: 'cubic-bezier(.2,.8,.2,1)' }); return; }
+    const dx = a.left - b.left, dy = a.top - b.top;
+    if (Math.abs(dx) < 1 && Math.abs(dy) < 1 && Math.abs(a.width - b.width) < 1 && Math.abs(a.height - b.height) < 1) return;
+    el.animate([{ transformOrigin: 'top left', transform: `translate(${dx}px,${dy}px) scale(${a.width / (b.width || 1)},${a.height / (b.height || 1)})` }, { transformOrigin: 'top left', transform: 'none' }], { duration: 320, easing: 'cubic-bezier(.2,.8,.2,1)' });
+  });
+}
+function wgCycle(id) {
+  const lay = wgLayout(), w = lay.find(x => x.id === id), s = WG_DEF[id].sizes;
+  w.size = s[(s.indexOf(w.size) + 1) % s.length]; wgSave(lay);
+  const el = $(`.wg[data-wg="${id}"]`);
+  flip($('#wgGrid'), '.wg', () => { if (el) el.dataset.size = w.size; });
+  if (el) { const b = el.querySelector('[data-wsize]'); if (b) b.title = 'Ubah ukuran (sekarang ' + SIZE_LBL[w.size] + ')'; }
+}
+function wgHide(id) {
+  const lay = wgLayout(); lay.find(x => x.id === id).hide = true; wgSave(lay);
+  flip($('#wgGrid'), '.wg', () => { const el = $(`.wg[data-wg="${id}"]`); if (el) el.remove(); });
+  $('#wgBar').innerHTML = wgBarHtml(lay);
+}
+function wgShow(id) { const lay = wgLayout(); lay.find(x => x.id === id).hide = false; wgSave(lay); wgRepaint(); }
+function wgReset() { try { localStorage.removeItem(wgKey()); } catch (e) { } wgRepaint(); toast('Susunan widget dikembalikan ke bawaan.', 'ok'); }
+function wgSaveOrder(grid) {
+  const lay = wgLayout(), vis = $$('.wg', grid).map(el => el.dataset.wg);
+  wgSave(vis.map(id => lay.find(x => x.id === id)).concat(lay.filter(x => vis.indexOf(x.id) < 0)));
+}
+function wgDragBind(grid) {
+  let lifted = null;
+  grid.addEventListener('touchmove', e => { if (lifted) e.preventDefault(); }, { passive: false });
+  grid.addEventListener('contextmenu', e => { if (S.wg && S.wg.edit) e.preventDefault(); });
+  grid.addEventListener('pointerdown', e => {
+    if (!S.wg || !S.wg.edit || e.button !== 0 || e.target.closest('.wg-tools')) return;
+    const el = e.target.closest('.wg'); if (!el) return;
+    const touch = e.pointerType !== 'mouse', sx = e.clientX, sy = e.clientY;
+    let timer = 0, grab = null, last = 0;
+    const natural = () => { const t = el.style.transform; el.style.transform = 'none'; const r = el.getBoundingClientRect(); el.style.transform = t; return r; };
+    const lift = () => { const r = el.getBoundingClientRect(); grab = { x: sx - r.left, y: sy - r.top }; lifted = el; el.classList.remove('press'); el.classList.add('lift'); if (navigator.vibrate) try { navigator.vibrate(10); } catch (x) { } };
+    const place = ev => { const r = natural(); el.style.transform = `translate(${ev.clientX - grab.x - r.left}px,${ev.clientY - grab.y - r.top}px)`; };
+    const move = ev => {
+      if (!lifted) { const dd = Math.hypot(ev.clientX - sx, ev.clientY - sy); if (touch) { if (dd > 8) stop(); return; } if (dd < 5) return; lift(); }
+      ev.preventDefault();
+      place(ev);
+      if (Date.now() - last > 110) {
+        const tgt = $$('.wg', grid).find(o => { if (o === el) return false; const q = o.getBoundingClientRect(); return ev.clientX > q.left && ev.clientX < q.right && ev.clientY > q.top && ev.clientY < q.bottom; });
+        if (tgt) {
+          last = Date.now();
+          const all = $$('.wg', grid), after = all.indexOf(el) < all.indexOf(tgt);
+          flip(grid, '.wg:not(.lift)', () => grid.insertBefore(el, after ? tgt.nextSibling : tgt));
+          place(ev);
+        }
+      }
+      if (ev.clientY < 80) scrollBy(0, -14); else if (ev.clientY > innerHeight - 80) scrollBy(0, 14);
+    };
+    const stop = () => { clearTimeout(timer); el.classList.remove('press'); removeEventListener('pointermove', move); removeEventListener('pointerup', up); removeEventListener('pointercancel', up); };
+    const up = () => {
+      stop();
+      if (lifted !== el) return;
+      lifted = null;
+      const cur = el.style.transform; el.style.transform = '';
+      if (cur && el.animate && !reduceMotion()) el.animate([{ transform: cur }, { transform: 'none' }], { duration: 220, easing: 'cubic-bezier(.2,.8,.2,1)' });
+      el.classList.remove('lift');
+      wgSaveOrder(grid);
+    };
+    if (touch) { el.classList.add('press'); timer = setTimeout(lift, 330); }
+    addEventListener('pointermove', move, { passive: false }); addEventListener('pointerup', up); addEventListener('pointercancel', up);
+  });
+  grid.addEventListener('keydown', e => {
+    if (!S.wg || !S.wg.edit || !e.altKey) return;
+    const el = e.target.closest('.wg'); if (!el) return;
+    const d = e.key === 'ArrowRight' || e.key === 'ArrowDown' ? 1 : e.key === 'ArrowLeft' || e.key === 'ArrowUp' ? -1 : 0; if (!d) return;
+    e.preventDefault();
+    flip(grid, '.wg', () => { if (d > 0 && el.nextElementSibling) grid.insertBefore(el.nextElementSibling, el); else if (d < 0 && el.previousElementSibling) grid.insertBefore(el, el.previousElementSibling); });
+    wgSaveOrder(grid); el.focus();
+  });
+  $$('.wg', grid).forEach(el => { el.tabIndex = S.wg.edit ? 0 : -1; });
+}
+function galImgs() {
+  const out = [];
+  ((S.dash && S.dash.d.galeri && S.dash.d.galeri.items) || []).forEach((p, pi) => p.foto.forEach(f => out.push({ url: f.url, th: f.th, slot: f.slot, title: p.Uraian, sub: p.SubBagian + ' \u00B7 ' + (KOL_LBL[p.Status] || p.Status), pid: p.ID, gi: pi })));
+  return out;
+}
+function galOpen(i) {
+  const imgs = galImgs(), p = S.dash.d.galeri.items[i]; if (!p) return;
+  const c = galCover(p), start = Math.max(0, imgs.findIndex(x => x.gi === i && x.slot === c.slot));
+  viewerOpen(imgs, start, { kicker: 'Galeri program kerja', dock: true, foot: 'Ketuk gambar kecil untuk berpindah foto' });
+}
+async function galPick() {
+  const pc = dcPeek('program.list', {});
+  let rows = pc ? pc.rows : null;
+  if (!rows) { toast('Memuat daftar program\u2026'); rows = (await api('program.list')).rows; }
+  const ber = rows.filter(p => p.FotoBefore || p.FotoDuring || p.FotoAfter);
+  const sel = new Set((S.dash.d.galeri && S.dash.d.galeri.ids) || []);
+  if (!ber.length) return toast('Belum ada program yang punya foto.', '');
+  openModal({
+    title: 'Pilih program untuk galeri', size: 'lg',
+    body: `<p class="help" style="margin-top:0">Centang maksimal 12 program. Bila tidak ada yang dicentang, galeri otomatis menampilkan foto terbaru.</p><input class="inp mb2" type="search" id="gpQ" placeholder="Cari program\u2026" oninput="$$('.gal-pick label').forEach(l=>{l.hidden=!!this.value&&l.dataset.q.indexOf(this.value.toLowerCase())<0})" aria-label="Cari program"><div class="gal-pick">${ber.map(p => `<label data-q="${E(((p.Uraian || '') + ' ' + p.SubBagian).toLowerCase())}"><input type="checkbox" class="check" value="${p.ID}"${sel.has(p.ID) ? ' checked' : ''}><span><b>${E(p.Uraian || p.SubBagian)}</b><small>${E(p.Bagian + ' \u00B7 ' + p.SubBagian + ' \u00B7 ' + (KOL_LBL[p.Status] || p.Status))} \u00B7 ${FT.filter(f => p['Foto' + f[0]]).length}/3 foto</small></span></label>`).join('')}</div>`,
+    footer: `<button class="btn-x btn-o" onclick="galSave([],this)">Kembali otomatis</button><button class="btn-x btn-p" onclick="galSave(null,this)"><i class="bi bi-check2"></i> Simpan pilihan</button>`
+  });
+}
+function galSave(ids, btn) {
+  return act(btn, async () => {
+    const list = ids || $$('.gal-pick input:checked').map(x => x.value);
+    if (list.length > 12) throw new Error('Maksimal 12 program. Kurangi centangnya.');
+    const r = await apiM('dash.galeriSave', { ids: list });
+    toast(r.message, 'ok'); closeModal(); navigateTo('dashboard', { force: true });
+  });
+}
 function aktivitasHtml(list) {
   if (!list || !list.length) return '<div class="muted tc" style="padding:.75rem;font-size:12px">Belum ada perubahan data pada rentang ini.</div>';
   return `<ul class="act-log">${list.map(a => `<li title="${E(a.ringkas)}"><time>${E(String(a.waktu).slice(8, 10) + '/' + String(a.waktu).slice(5, 7) + ' ' + String(a.waktu).slice(11, 16))}</time><div class="trunc"><b>${E(a.oleh)}</b> ${E(a.aksi.toLowerCase())} ${E(a.data)}<span class="s trunc">${E(a.ringkas)}</span></div></li>`).join('')}</ul>`;
-}
-function dashProgGroupHtml(bagian) {
-  const d = S.dash.d, all = (d.programByBagian.find(x => x.bagian === bagian) || { items: [] }).items;
-  const rg = progRange(S.dashProg || 'ini', bagian, d.minggu);
-  const list = all.filter(p => (!rg.from || p.Tanggal >= rg.from) && (!rg.to || p.Tanggal <= rg.to));
-  return progCompactGroup(bagian, list.slice(0, 4), { range: rg, more: list.length > 4 ? list.length - 4 : 0, openAll: true });
-}
-function setDashProg(k) {
-  S.dashProg = k;
-  $$('[data-dp]').forEach(b => b.classList.toggle('on', b.dataset.dp === k));
-  const el = $('#dashProgs'); el.innerHTML = dashProgGroupHtml('Tambal Sulam') + dashProgGroupHtml('Proyek'); loadThumbs(el);
-}
-function programExportGroup(bagian, btn) {
-  const rg = (S.expRange || {})[bagian] || {};
-  const rows = ((S.prog && S.prog.rows) || []).filter(p => p.Bagian === bagian && (!rg.from || p.Tanggal >= rg.from) && (!rg.to || p.Tanggal <= rg.to));
-  const nFoto = rows.reduce((n, p) => n + ['FotoBefore', 'FotoDuring', 'FotoAfter'].filter(k => p[k]).length, 0);
-  const est = Math.max(8, Math.round(4 + rows.length * 0.6 + nFoto * 0.9));
-  return act(btn, async () => {
-    openModal({ title: 'Menyusun laporan Docs', body: `<div class="exp-prog"><div class="exp-ring"></div><div><b>${E(bagian)} \u00B7 ${E(rg.label || '')}</b><p class="muted" style="margin:.25rem 0 0">${rows.length ? rows.length + ' program, ' + nFoto + ' foto' : 'Menyiapkan data'}. Perkiraan \u00B1${est} detik.</p><div class="exp-bar"><span id="expBar"></span></div><p class="muted" id="expTime" style="margin:.35rem 0 0;font-size:12px">0 detik</p></div></div><p class="help mt2">Google Docs membuat dokumen dan menyisipkan setiap foto satu per satu, jadi makin banyak foto makin lama. Jendela ini boleh ditutup; proses tetap berjalan dan tautan muncul setelah selesai.</p>` });
-    const t0 = Date.now(), tick = setInterval(() => { const d = Math.round((Date.now() - t0) / 1000), el = $('#expTime'), bar = $('#expBar'); if (el) el.textContent = d + ' detik' + (d > est ? ' \u00B7 sedikit lebih lama dari perkiraan, mohon tunggu' : ''); if (bar) bar.style.width = Math.min(95, Math.round(d / est * 100)) + '%'; }, 1000);
-    try {
-      const r = await apiM('program.exportDocGroup', { bagian: bagian, from: rg.from || '', to: rg.to || '', label: rg.label || '' });
-      clearInterval(tick); closeModal(); showExport(r.data, 'Buka Google Docs');
-    } catch (e) { clearInterval(tick); closeModal(); throw e; }
-  });
 }
 
 function dashToko(d) {
@@ -1155,157 +1428,401 @@ async function keuPatokan(bagian, tanggal) {
 }
 function progRange(key, bagian, mg) {
   const t = todayStr(), st = cycStart(t);
-  const wk = s0 => { if (!mg) return ''; const pat = bagian === 'Proyek' ? mg.pr.patokan : mg.ts.patokan; if (!pat) return ''; const n = Math.floor((parseD(s0) - parseD(pat)) / (7 * 864e5)) + 1; return 'Minggu ke-' + (n < 1 ? 1 : n) + ' '; };
+  const wk = s0 => { if (!mg) return ''; const pat = bagian === 'Proyek' ? mg.pr.patokan : mg.ts.patokan; if (!pat) return ''; const n = Math.floor((parseD(s0) - parseD(cycStart(pat))) / (7 * 864e5)) + 1; return 'Minggu ke-' + (n < 1 ? 1 : n) + ' '; };
   if (key === 'ini') return { from: st, to: addD(st, 6), label: wk(st) + '(' + fdate(st) + ' \u2013 ' + fdate(addD(st, 6)) + ')' };
   if (key === 'lalu') { const a = addD(st, -7); return { from: a, to: addD(a, 6), label: wk(a) + '(' + fdate(a) + ' \u2013 ' + fdate(addD(a, 6)) + ')' }; }
   if (key === 'bulan') { const a = t.slice(0, 8) + '01', d = new Date(parseD(a)); d.setUTCMonth(d.getUTCMonth() + 1); const b = addD(d.toISOString().slice(0, 10), -1); return { from: a, to: b, label: 'Bulan ' + BLN[Number(t.slice(5, 7)) - 1] + ' ' + t.slice(0, 4) }; }
   if (key === 'rentang') { const a = S.progFrom || '', b = S.progTo || ''; return { from: a, to: b, label: (a ? fdate(a) : 'awal') + ' \u2013 ' + (b ? fdate(b) : 'akhir') }; }
   return { from: '', to: '', label: 'Semua periode' };
 }
-function programCard(p) {
-  const st = isStaff();
-  const slots = [['Before', 'Sebelum'], ['During', 'Proses'], ['After', 'Selesai']];
-  const triad = slots.map(s => {
-    const k = s[0], l = s[1], u = p['Foto' + k];
-    if (u) return `<div class="slot loading" data-thumb="${E(u)}" data-preview="${E(u)}" data-title="${E(l + ' \u2014 ' + p.SubBagian)}" role="button" tabindex="0" aria-label="Lihat foto ${E(l)}"><span class="tag">${E(l)}</span>${st ? `<button class="fdel" data-fdel data-pid="${p.ID}" data-slot="${k}" data-lbl="${E(l)}" aria-label="Hapus foto ${E(l)}" title="Hapus foto"><i class="bi bi-trash3"></i></button><button class="re" data-upload data-pid="${p.ID}" data-slot="${k}" aria-label="Ganti foto ${k}"><i class="bi bi-arrow-repeat"></i></button>` : ''}</div>`;
-    return st ? `<button type="button" class="slot empty" data-upload data-pid="${p.ID}" data-slot="${k}"><i class="bi bi-camera"></i><span><span class="hide-xs">Unggah foto </span>${E(l)}</span><span class="muted" style="font-weight:500">Maks. 1 MB</span></button>` : `<div class="slot empty" style="cursor:default;border-style:solid"><i class="bi bi-image"></i><span>${E(l)}<br>belum ada</span></div>`;
-  }).join('');
-  return `<article class="prog" id="prog_${p.ID}">
-    <div class="row-f between wrap gap1"><div class="grow"><h3 style="font-size:16px;line-height:22px;margin:0">${E(p.Uraian || p.SubBagian)}</h3><div class="muted">Sub-bagian: ${E(p.SubBagian)}</div><div class="mt1">${badge(p.Status || 'Direncanakan')}</div></div>
-    ${st ? `<div class="row-f gap1"><button class="btn-x btn-o btn-sm" onclick="programEdit('${p.ID}')"><i class="bi bi-pencil"></i> Ubah</button><button class="btn-x btn-d btn-sm" onclick="programDel('${p.ID}')" aria-label="Hapus program"><i class="bi bi-trash"></i> Hapus</button></div>` : ''}</div>
-    <div class="triad">${triad}</div>
-  </article>`;
+/** Program Kerja & Proses: tampil bila dimulai sebelum akhir periode. Hasil Usaha: tampil bila selesai di dalam periode. */
+function progInRange(p, rg) {
+  if (!rg.from && !rg.to) return true;
+  if (p.Status === 'Selesai') { const d = p.TglRealisasi || p.Tanggal; return (!rg.from || d >= rg.from) && (!rg.to || d <= rg.to); }
+  return !rg.to || p.Tanggal <= rg.to;
 }
-async function deleteSlot(pid, slot, lbl, el) {
-  if (!(await confirmBox('Hapus foto <b>' + E(lbl) + '</b>? File foto di Google Drive juga ikut dihapus.', 'Ya, hapus foto'))) return;
-  if (el) el.classList.add('up');
+async function deleteSlot(pid, slot) {
+  if (!(await confirmBox('Hapus foto <b>' + E(slot) + '</b>? File foto di Google Drive juga ikut dihapus.', 'Ya, hapus foto'))) return;
   try {
     const r = await apiM('program.fotoDel', { id: pid, slot: slot });
     toast(r.message, 'ok'); programUpdated(r.data);
-  } catch (e) { toast(e.message, 'err'); if (el) el.classList.remove('up'); }
+  } catch (e) { toast(e.message, 'err'); }
 }
-function programGroupHtml(bagian, list, opt) {
-  opt = opt || {};
-  (S.expRange = S.expRange || {})[bagian] = opt.range || { from: '', to: '', label: 'Semua periode' };
-  const items = list.length ? list.map((p, i) => programCard(p).replace('<h3 style="font-size:16px;line-height:22px;margin:0">', `<h3 style="font-size:16px;line-height:22px;margin:0"><span class="muted">${i + 1}.</span> `)).join('') : emptyBox('Belum ada program ' + bagian);
-  return `<div class="grp grp-${bagian === 'Tambal Sulam' ? 'ts' : 'pr'}">
-    <div class="grp-h"><span>${E(bagian.toUpperCase())}${opt.range ? `<small class="grp-sub">${E(opt.range.label)}</small>` : ''}</span><span class="pill">${list.length}${opt.more ? '+' + opt.more : ''} program</span></div>
-    <div class="grp-b">${items}
-      <div class="row-f between wrap gap1 mt2">${isStaff() ? `<button class="btn-x btn-p btn-sm" onclick="programForm(null,{Bagian:'${bagian}'})"><i class="bi bi-plus-lg"></i> Tambah program ${E(bagian)}</button>${opt.more ? `<button class="btn-x btn-o btn-sm" onclick="navigateTo('program')">Lihat ${opt.more} lainnya</button>` : ''}<button class="btn-x btn-o btn-sm" onclick="programExportGroup('${bagian}',this)"><i class="bi bi-file-earmark-word"></i> Export Docs ${E(bagian)} (sesuai tampilan)</button>` : ''}</div>
-    </div></div>`;
-}
+const KOL = [['Direncanakan', 'Program Kerja'], ['Berjalan', 'Proses'], ['Selesai', 'Hasil Usaha']];
+const FT = [['Before', 'Before'], ['During', 'During'], ['After', 'After']];
+const fotoMetaOf = p => { try { const o = JSON.parse(p.FotoMeta || '{}'); return o && typeof o === 'object' ? o : {}; } catch (e) { return {}; } };
 PAGES.program = async function () {
   const r = await api('program.list');
-  S.prog = { rows: r.rows, sub: r.sub, minggu: r.minggu }; S.progKey = S.progKey || 'ini';
+  S.prog = { rows: r.rows, sub: r.sub, minggu: r.minggu, urut: r.urutSub || [] }; S.progKey = S.progKey || 'ini'; S.progBag = S.progBag || 'Semua';
+  const bagBtn = b => `<button type="button" class="${S.progBag === b ? 'on' : ''}" data-pbag="${b}" onclick="progBagSet('${b}')">${b === 'Semua' ? 'Semua bagian' : E(b)}</button>`;
   return {
-    html: `<div class="page-head"><div><h1>Program kerja</h1><p>Rencana dan progres fisik tiap sub-bagian, dikelompokkan per bagian, lengkap dengan dokumentasi foto Sebelum \u00B7 Proses \u00B7 Selesai.</p></div><div class="row-f gap1 wrap ph-acts"><button class="btn-x btn-o" onclick="subManage()"><i class="bi bi-diagram-3"></i> Kelola sub-bagian</button><button class="btn-x btn-o" onclick="importOpen('program')"><i class="bi bi-file-earmark-spreadsheet"></i> Impor Excel</button><button class="btn-x btn-p" onclick="programForm()"><i class="bi bi-plus-lg"></i> Tambah program</button></div></div>
-    <section class="card-x"><div class="tools prog-tools">
-      <div class="search"><i class="bi bi-search"></i><input class="inp" id="progQ" type="search" placeholder="Cari program, lokasi, mandor\u2026" aria-label="Cari program" oninput="paintPrograms()"></div>
-      <select class="inp" id="progS" style="width:auto" onchange="paintPrograms()" aria-label="Filter status"><option value="">Semua status</option><option value="Direncanakan">Direncanakan</option><option value="Berjalan">Proses</option><option value="Selesai">Selesai</option></select>
+    html: `<div class="page-head"><div><h1>Program kerja</h1><p>Papan per sub-bagian: <b>Program Kerja \u2192 Proses \u2192 Hasil Usaha</b>. Seret kartu untuk memindah (di HP: tekan lama kartunya). Ikon kamera menunjukkan kelengkapan foto Before \u00B7 During \u00B7 After.</p></div><div class="row-f gap1 wrap ph-acts"><button class="btn-x btn-o" onclick="subManage()"><i class="bi bi-diagram-3"></i> Kelola sub-bagian</button><button class="btn-x btn-o" onclick="importOpen('program')"><i class="bi bi-file-earmark-spreadsheet"></i> Impor Excel</button><button class="btn-x btn-g" onclick="lapOpen()"><i class="bi bi-file-earmark-word"></i> Export Docs mingguan</button><button class="btn-x btn-p" onclick="programForm()"><i class="bi bi-plus-lg"></i> Tambah program</button></div></div>
+    <section class="card-x"><div class="kb-tools">
+      <div class="seg-b" role="group" aria-label="Pilih bagian">${['Semua', 'Tambal Sulam', 'Proyek'].map(bagBtn).join('')}</div>
+      <div class="search"><i class="bi bi-search"></i><input class="inp" id="progQ" type="search" placeholder="Cari program, lokasi, pekerja\u2026" aria-label="Cari program" oninput="clearTimeout(S.progT);S.progT=setTimeout(paintPrograms,180)"></div>
       <select class="inp" id="progSub" style="width:auto;max-width:240px" onchange="S.progSub=this.value;paintPrograms()" aria-label="Filter sub-bagian"><option value="">Semua sub-bagian</option></select>
-      <select class="inp" id="progK" style="width:auto" onchange="S.progKey=this.value;paintPrograms()" aria-label="Filter periode">${[['ini', 'Periode minggu ini'], ['lalu', 'Minggu lalu'], ['bulan', 'Bulan ini'], ['semua', 'Semua'], ['rentang', 'Pilih tanggal\u2026']].map(o => `<option value="${o[0]}"${S.progKey === o[0] ? ' selected' : ''}>${o[1]}</option>`).join('')}</select>
+      <select class="inp" id="progK" style="width:auto" onchange="S.progKey=this.value;paintPrograms()" aria-label="Filter periode">${[['ini', 'Minggu ini'], ['lalu', 'Minggu lalu'], ['bulan', 'Bulan ini'], ['semua', 'Semua'], ['rentang', 'Pilih tanggal\u2026']].map(o => `<option value="${o[0]}"${S.progKey === o[0] ? ' selected' : ''}>${o[1]}</option>`).join('')}</select>
       <span id="progRg" class="row-f gap1 wrap"${S.progKey === 'rentang' ? '' : ' hidden'}><input type="date" class="inp" style="width:auto" id="progFrom" value="${E(S.progFrom || '')}" onchange="S.progFrom=this.value;paintPrograms()" aria-label="Dari tanggal"><span class="muted">s.d.</span><input type="date" class="inp" style="width:auto" id="progTo" value="${E(S.progTo || '')}" onchange="S.progTo=this.value;paintPrograms()" aria-label="Sampai tanggal"></span>
-    </div><div id="progList"></div></section>`,
-    init: () => paintPrograms()
+      <span class="grow"></span><button type="button" class="btn-x btn-o btn-sm" onclick="kbAll(true)"><i class="bi bi-arrows-expand"></i><span class="hide-xs"> Buka semua</span></button><button type="button" class="btn-x btn-o btn-sm" onclick="kbAll(false)"><i class="bi bi-arrows-collapse"></i><span class="hide-xs"> Tutup semua</span></button>
+    </div><p class="help" style="margin:-.4rem 0 1rem">Periode: Program Kerja &amp; Proses tampil selama belum selesai; Hasil Usaha tampil bila selesai pada periode yang dipilih.</p><div id="progList"></div></section>`,
+    init: () => { paintPrograms(); kbBind($('#progList')); }
   };
 };
-const FT = [['Before', 'Before'], ['During', 'During'], ['After', 'After']];
+function progBagSet(b) { S.progBag = b; $$('[data-pbag]').forEach(x => x.classList.toggle('on', x.dataset.pbag === b)); paintPrograms(); }
 function progSubOptions() {
   const sel = $('#progSub'); if (!sel || !S.prog) return;
   const by = { 'Tambal Sulam': {}, 'Proyek': {} };
   S.prog.rows.forEach(p => { if (by[p.Bagian]) { const k = p.SubBagian || ''; by[p.Bagian][k] = (by[p.Bagian][k] || 0) + 1; } });
   const cur = S.progSub || '';
-  const html = '<option value="">Semua sub-bagian</option>' + Object.keys(by).map(b => { const ks = Object.keys(by[b]).sort((x, y) => x.localeCompare(y)); return ks.length ? `<optgroup label="${E(b)}">${ks.map(k => `<option value="${E(b + '|' + k)}"${cur === b + '|' + k ? ' selected' : ''}>${E(k || '(Tanpa sub-bagian)')} (${by[b][k]})</option>`).join('')}</optgroup>` : ''; }).join('');
+  const html = '<option value="">Semua sub-bagian</option>' + Object.keys(by).map(b => { const ks = Object.keys(by[b]).sort(b === 'Tambal Sulam' ? subCmp : (x, y) => x.localeCompare(y)); return ks.length ? `<optgroup label="${E(b)}">${ks.map(k => `<option value="${E(b + '|' + k)}"${cur === b + '|' + k ? ' selected' : ''}>${E(k || '(Tanpa sub-bagian)')} (${by[b][k]})</option>`).join('')}</optgroup>` : ''; }).join('');
   if (sel.dataset.h !== html) { sel.innerHTML = html; sel.dataset.h = html; }
   if (cur && !sel.querySelector(`option[value="${cur.replace(/"/g, '')}"]`)) { S.progSub = ''; sel.value = ''; }
 }
-function progRow(p, n) {
-  const st = isStaff();
-  const chips = FT.map(f => { const has = !!p['Foto' + f[0]]; return `<button type="button" class="pf-chip${has ? ' ok' : ''}" data-pid="${p.ID}" data-slot="${f[0]}" onclick="fotoChip(this)" ${!has && !st ? 'disabled' : ''} aria-label="${has ? 'Foto ' + f[1] + ' sudah ada, klik untuk lihat/ganti/hapus' : 'Unggah foto ' + f[1]}"><i class="bi ${has ? 'bi-check-circle-fill' : 'bi-plus-circle'}"></i>${f[1]}</button>`; }).join('');
+function subCmp(a, b) {
+  const u = (S.prog && S.prog.urut) || [], i = u.indexOf(a), j = u.indexOf(b);
+  return (i < 0 ? 999 : i) - (j < 0 ? 999 : j) || String(a).localeCompare(String(b));
+}
+const upPending = (pid, slot) => UPQ.jobs.some(j => j.pid === pid && j.slot === slot && !j.err);
+function kbCard(p) {
+  const n = FT.filter(f => p['Foto' + f[0]] || upPending(p.ID, f[0])).length, up = FT.some(f => upPending(p.ID, f[0])), tmp = String(p.ID).indexOf('tmp_') === 0;
+  const fc = n === 0 ? 'f0' : n === 3 ? 'f3' : 'f1', ic = up ? 'bi-arrow-repeat' : n === 0 ? 'bi-camera' : n === 3 ? 'bi-patch-check-fill' : 'bi-images';
   const info = [p.PenanggungJawab, p.Durasi].filter(Boolean).join(' \u00B7 ');
-  return `<div class="pr-row" id="prog_${p.ID}"><div class="pr-main"><span class="pr-no">${n}.</span><div class="pr-txt"><b title="${E(p.Uraian || '')}">${E(p.Uraian || p.SubBagian || '-')}</b>${info ? `<small>${E(info)}</small>` : ''}</div></div><div class="pr-st">${badge(p.Status || 'Direncanakan')}</div><div class="pr-ft">${chips}</div>${st ? `<div class="pr-act"><button class="btn-x btn-o btn-sm" onclick="programEdit('${p.ID}')" aria-label="Ubah program" title="Ubah"><i class="bi bi-pencil"></i><span class="hide-m"> Ubah</span></button><button class="btn-x btn-d btn-sm" onclick="programDel('${p.ID}')" aria-label="Hapus program" title="Hapus"><i class="bi bi-trash"></i></button></div>` : ''}</div>`;
+  const tg = p.Status === 'Selesai' && p.TglRealisasi ? 'Selesai ' + fdShort(p.TglRealisasi) : fdShort(p.Tanggal);
+  const tip = n === 0 ? 'Belum ada foto' : n === 3 ? 'Foto lengkap: Before, During, After' : 'Foto sebagian: ' + n + ' dari 3';
+  return `<article class="kb-card${tmp ? ' saving' : ''}" data-id="${E(p.ID)}" tabindex="0" aria-label="${E(p.Uraian || p.SubBagian)}"><div class="kb-t">${E(p.Uraian || p.SubBagian || '-')}</div>${info ? `<div class="kb-m">${E(info)}</div>` : ''}<div class="kb-f"><span class="kb-date">${E(tg)}</span>${tmp ? '' : `<button type="button" class="kb-ic ${fc}${up ? ' up' : ''}" data-kfoto title="${E(tip)}" aria-label="${E(tip)}"><i class="bi ${ic}"></i><b>${n}/3</b></button>${isStaff() ? `<button type="button" class="kb-ic" data-kedit title="Ubah program" aria-label="Ubah program"><i class="bi bi-pencil"></i></button><button type="button" class="kb-ic del" data-kdel title="Hapus program" aria-label="Hapus program"><i class="bi bi-trash"></i></button>` : ''}`}</div></article>`;
 }
-function progCompactGroup(bagian, list, opt) {
-  opt = opt || {};
-  (S.expRange = S.expRange || {})[bagian] = opt.range || { from: '', to: '', label: 'Semua periode' };
-  const subs = {}; list.forEach(p => { const k = p.SubBagian || ''; (subs[k] = subs[k] || []).push(p); });
-  const open = S.progOpen = S.progOpen || {}, autoOpen = !!opt.openAll || !!S.progSub || !!(($('#progQ') || {}).value || '').trim();
-  let n = 0;
-  const body = list.length ? Object.keys(subs).sort((x, y) => x.localeCompare(y)).map(k => {
-    const id = bagian + '|' + k, rows = subs[k], fotoOk = rows.reduce((a, p) => a + FT.filter(f => p['Foto' + f[0]]).length, 0);
-    return `<div class="sb-grp${autoOpen || open[id] ? '' : ' col'}"><button type="button" class="sb-h" aria-expanded="${autoOpen || open[id] ? 'true' : 'false'}" onclick="progToggle(this,'${E(id).replace(/'/g, '&#39;')}')"><i class="bi bi-chevron-down"></i><b>${E(k || '(Tanpa sub-bagian)')}</b><span class="muted">${rows.length} program \u00B7 foto ${fotoOk}/${rows.length * 3}</span></button><div class="sb-b">${rows.map(p => progRow(p, ++n)).join('')}</div></div>`;
-  }).join('') : emptyBox('Belum ada program ' + bagian + ' pada filter ini');
-  return `<div class="grp grp-${bagian === 'Tambal Sulam' ? 'ts' : 'pr'}">
-    <div class="grp-h"><span>${E(bagian.toUpperCase())}${opt.range ? `<small class="grp-sub">${E(opt.range.label)}</small>` : ''}</span><span class="pill">${list.length + (opt.more || 0)} program</span></div>
-    <div class="grp-b">${body}
-      <div class="row-f between wrap gap1 mt2">${isStaff() ? `<button class="btn-x btn-p btn-sm" onclick="programForm(null,{Bagian:'${bagian}'})"><i class="bi bi-plus-lg"></i> Tambah program ${E(bagian)}</button>` : '<span></span>'}${opt.more ? `<button class="btn-x btn-o btn-sm" onclick="navigateTo('program')">Lihat ${opt.more} lainnya</button>` : ''}<button class="btn-x btn-o btn-sm" onclick="programExportGroup('${bagian}',this)"><i class="bi bi-file-earmark-word"></i> Export Docs ${E(bagian)} (sesuai tampilan)</button></div>
-    </div></div>`;
+function kbColHtml(c, list) {
+  const sorted = list.slice().sort((a, b) => c[0] === 'Selesai' ? String(b.TglRealisasi || b.Tanggal).localeCompare(String(a.TglRealisasi || a.Tanggal)) : String(b.Tanggal).localeCompare(String(a.Tanggal)));
+  return `<div class="kb-col" data-col="${c[0]}"><div class="kb-ch"><span class="d"></span>${c[1]}<span class="n">${list.length}</span></div><div class="kb-list">${sorted.length ? sorted.map(kbCard).join('') : `<div class="kb-empty">${isStaff() ? 'Seret kartu ke sini' : 'Kosong'}</div>`}</div>${isStaff() ? `<button type="button" class="kb-add" data-kadd><i class="bi bi-plus-lg"></i> Tambah ${E(c[1].toLowerCase())}</button>` : ''}</div>`;
 }
-function progToggle(btn, id) { const g = btn.parentElement; g.classList.toggle('col'); const op = !g.classList.contains('col'); (S.progOpen = S.progOpen || {})[id] = op; btn.setAttribute('aria-expanded', op ? 'true' : 'false'); }
-async function fotoChip(btn) {
-  const pid = btn.dataset.pid, slot = btn.dataset.slot;
-  let p = (S.prog && S.prog.rows.find(x => x.ID === pid)) || null;
-  if (!p && S.dash && S.dash.d.programByBagian) S.dash.d.programByBagian.forEach(g => { p = p || g.items.find(x => x.ID === pid) || null; });
-  if (!p) return;
-  const url = p['Foto' + slot], nama = p.Uraian || p.SubBagian;
-  if (!url) { if (isStaff()) uploadSlot(pid, slot, btn); return; }
-  openModal({
-    title: 'Foto ' + slot + ' \u00B7 ' + nama, size: 'lg',
-    body: `<div class="fp-view" id="fpView"><span class="spin-sm"></span> Memuat foto\u2026</div>`,
-    footer: (isStaff() ? `<button class="btn-x btn-d" id="fpDel"><i class="bi bi-trash"></i> Hapus</button><button class="btn-x btn-o" id="fpRep"><i class="bi bi-arrow-repeat"></i> Ganti</button>` : '') + `<button class="btn-x btn-p" data-bs-dismiss="modal">Tutup</button>`
-  });
-  if (isStaff()) {
-    $('#fpRep').onclick = () => { closeModal(); setTimeout(() => uploadSlot(pid, slot, btn), 250); };
-    $('#fpDel').onclick = () => { closeModal(); setTimeout(() => deleteSlot(pid, slot, slot, btn), 250); };
-  }
-  try {
-    let d = AppState.img[url];
-    if (!d) { const m = await thGetMany([url]); d = m[url]; }
-    if (!d) { d = (await apiM('file.get', { url: url, thumb: 1 }, true)).data.dataUrl; if (d) { AppState.img[url] = d; if (d.length < 400000) thPutMany({ [url]: d }); } }
-    const v = $('#fpView'); if (v) v.innerHTML = `<img alt="Foto ${E(slot)} ${E(nama)}" src="${d}">`;
-    try { const full = (await apiM('file.get', { url: url }, true)).data.dataUrl; const v2 = $('#fpView img'); if (v2 && full) v2.src = full; } catch (e) { }
-  } catch (e) { const v = $('#fpView'); if (v) v.innerHTML = `<div class="err-box">${E(e.message)}</div>`; }
+function kbGrpHtml(b, k, list, autoOpen) {
+  const id = b + '|' + k, open = autoOpen || (S.progOpen || {})[id];
+  const cnt = {}; KOL.forEach(c => { cnt[c[0]] = list.filter(p => (p.Status || 'Direncanakan') === c[0]).length; });
+  const foto = list.reduce((a, p) => a + FT.filter(f => p['Foto' + f[0]]).length, 0);
+  const tab = (S.kbTab || {})[id] || (cnt.Berjalan ? 'Berjalan' : cnt.Direncanakan ? 'Direncanakan' : 'Selesai');
+  return `<div class="kb-grp${open ? '' : ' col'}" data-g="${E(id)}"><button type="button" class="kb-gh" data-gtog aria-expanded="${open ? 'true' : 'false'}"><i class="bi bi-chevron-down"></i><b>${E(k || '(Tanpa sub-bagian)')}</b><span class="kb-cnt"><span>${cnt.Direncanakan} program</span><span class="c1">${cnt.Berjalan} proses</span><span class="c2">${cnt.Selesai} hasil</span><span class="cf" title="Foto terisi dari ${list.length * 3}"><i class="bi bi-camera"></i> ${foto}/${list.length * 3}</span></span></button>
+    <div class="kb-tabs" role="tablist" aria-label="Kolom">${KOL.map(c => `<button type="button" role="tab" aria-selected="${tab === c[0]}" class="${tab === c[0] ? 'on' : ''}" data-col="${c[0]}" data-ktab="${c[0]}"><b>${cnt[c[0]]}</b>${c[1]}</button>`).join('')}</div>
+    <div class="kb-board" data-tab="${tab}">${KOL.map(c => kbColHtml(c, list.filter(p => (p.Status || 'Direncanakan') === c[0]))).join('')}</div></div>`;
 }
 function paintPrograms() {
   if (!S.prog || !Array.isArray(S.prog.rows)) { const el0 = $('#progList'); if (el0) el0.innerHTML = skeleton(); if (AppState.page === 'program') setTimeout(() => navigateTo('program', { force: true }), 50); return; }
-  const q = $('#progQ').value.trim().toLowerCase(), st = $('#progS').value, key = S.progKey || 'ini';
-  $('#progRg').hidden = key !== 'rentang';
-  const filt = p => (!st || p.Status === st) && (!q || rowText(p).indexOf(q) >= 0);
-  const el = $('#progList');
+  const el = $('#progList'); if (!el) return;
+  const q = (($('#progQ') || {}).value || '').trim().toLowerCase(), key = S.progKey || 'ini';
+  const rgBox = $('#progRg'); if (rgBox) rgBox.hidden = key !== 'rentang';
   progSubOptions();
-  const sub = S.progSub || '';
-  const filtSub = p => !sub || (p.Bagian + '|' + (p.SubBagian || '')) === sub;
-  el.innerHTML = ['Tambal Sulam', 'Proyek'].map(b => {
+  const sub = S.progSub || '', focus = S.progFocus || '';
+  const html = ['Tambal Sulam', 'Proyek'].filter(b => (S.progBag || 'Semua') === 'Semua' || S.progBag === b).filter(b => !sub || sub.split('|')[0] === b).map(b => {
     const rg = progRange(key, b, S.prog.minggu);
-    if (sub && sub.split('|')[0] !== b) { (S.expRange = S.expRange || {})[b] = rg; return ''; }
-    return progCompactGroup(b, S.prog.rows.filter(p => p.Bagian === b && (!rg.from || p.Tanggal >= rg.from) && (!rg.to || p.Tanggal <= rg.to)).filter(filt).filter(filtSub), { range: rg });
+    const rows = S.prog.rows.filter(p => p.Bagian === b && progInRange(p, rg) && (!q || rowText(p).indexOf(q) >= 0) && (!sub || (p.Bagian + '|' + (p.SubBagian || '')) === sub));
+    const groups = {}; rows.forEach(p => { const k = p.SubBagian || ''; (groups[k] = groups[k] || []).push(p); });
+    const keys = Object.keys(groups).sort(b === 'Tambal Sulam' ? subCmp : (x, y) => x.localeCompare(y));
+    const auto = !!q || !!sub;
+    return `<div class="kb-bag"><div class="kb-bag-h ${b === 'Proyek' ? 'pr' : ''}"><div><b>${E(b.toUpperCase())}</b><small>${E(rg.label)}</small></div><div class="row-f gap1 wrap"><span class="pill">${rows.length} program</span>${isStaff() ? `<button type="button" class="btn-x btn-sm" onclick="programForm(null,{Bagian:'${b}'})"><i class="bi bi-plus-lg"></i> Tambah</button>` : ''}</div></div>${keys.length ? keys.map(k => kbGrpHtml(b, k, groups[k], auto || groups[k].some(p => p.ID === focus))).join('') : emptyBox('Belum ada program ' + b + ' pada filter ini', isStaff() ? 'Klik "Tambah program" untuk membuat yang pertama.' : '')}</div>`;
   }).join('');
+  el.innerHTML = html || emptyBox('Tidak ada program pada filter ini');
+  if (focus) { S.progFocus = ''; const c = el.querySelector(`.kb-card[data-id="${CSS.escape(focus)}"]`); if (c) { const g = c.closest('.kb-grp'), bd = c.closest('.kb-board'), col = c.closest('.kb-col'); if (bd && col) { bd.dataset.tab = col.dataset.col; } c.classList.add('flash'); setTimeout(() => c.scrollIntoView({ block: 'center', behavior: 'smooth' }), 60); } }
+}
+function kbAll(open) {
+  S.progOpen = S.progOpen || {};
+  $$('#progList .kb-grp').forEach(g => { g.classList.toggle('col', !open); S.progOpen[g.dataset.g] = open; const h = g.querySelector('[data-gtog]'); if (h) h.setAttribute('aria-expanded', open ? 'true' : 'false'); });
+}
+const KB = { drag: null, swallow: 0 };
+function kbBind(root) {
+  if (!root) return;
+  root.addEventListener('click', e => {
+    if (Date.now() < KB.swallow) { e.preventDefault(); return; }
+    const t = e.target;
+    const gt = t.closest('[data-gtog]');
+    if (gt) { const g = gt.closest('.kb-grp'); g.classList.toggle('col'); const op = !g.classList.contains('col'); (S.progOpen = S.progOpen || {})[g.dataset.g] = op; gt.setAttribute('aria-expanded', op ? 'true' : 'false'); return; }
+    const tb = t.closest('[data-ktab]');
+    if (tb) { const g = tb.closest('.kb-grp'); (S.kbTab = S.kbTab || {})[g.dataset.g] = tb.dataset.ktab; g.querySelector('.kb-board').dataset.tab = tb.dataset.ktab; $$('[data-ktab]', g).forEach(x => { const on = x === tb; x.classList.toggle('on', on); x.setAttribute('aria-selected', on); }); return; }
+    if (t.closest('[data-kadd]')) return kbNew(t.closest('.kb-col'));
+    if (t.closest('[data-kncancel]')) return kbNewClose(t.closest('.kb-col'));
+    if (t.closest('[data-knsave]')) return kbNewSave(t.closest('.kb-col'));
+    if (t.closest('[data-knfull]')) return kbNewFull(t.closest('.kb-col'));
+    const card = t.closest('.kb-card'), id = card && card.dataset.id;
+    if (!id || id.indexOf('tmp_') === 0) return;
+    if (t.closest('[data-kfoto]')) return viewerProg(id);
+    if (t.closest('[data-kedit]')) return programEdit(id);
+    if (t.closest('[data-kdel]')) return programDel(id);
+  });
+  root.addEventListener('dblclick', e => { const c = e.target.closest('.kb-card'); if (c && !e.target.closest('button') && c.dataset.id.indexOf('tmp_') < 0) viewerProg(c.dataset.id); });
+  root.addEventListener('keydown', e => {
+    const ta = e.target.closest('.kb-new textarea');
+    if (ta) { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); kbNewSave(ta.closest('.kb-col')); } else if (e.key === 'Escape') kbNewClose(ta.closest('.kb-col')); return; }
+    const c = e.target.closest('.kb-card'); if (!c || e.target !== c) return;
+    if (e.key === 'Enter') { e.preventDefault(); viewerProg(c.dataset.id); return; }
+    if (e.altKey && (e.key === 'ArrowRight' || e.key === 'ArrowLeft') && isStaff()) {
+      e.preventDefault();
+      const cur = c.closest('.kb-col').dataset.col, i = KOL.findIndex(k => k[0] === cur) + (e.key === 'ArrowRight' ? 1 : -1);
+      if (KOL[i]) kbMoveTo(c.dataset.id, KOL[i][0], true);
+    }
+  });
+  root.addEventListener('touchmove', e => { if (KB.drag) e.preventDefault(); }, { passive: false });
+  root.addEventListener('contextmenu', e => { if (e.target.closest('.kb-card') && e.pointerType !== 'mouse') e.preventDefault(); });
+  root.addEventListener('pointerdown', kbDown);
+}
+function kbTrash(show) {
+  let el = $('#kbTrash');
+  if (!el) { el = document.createElement('div'); el.id = 'kbTrash'; el.className = 'kb-trash'; el.innerHTML = '<i class="bi bi-trash3"></i> Lepas di sini untuk menghapus'; document.body.appendChild(el); }
+  el.classList.toggle('show', !!show); el.classList.remove('over');
+}
+function kbDown(e) {
+  if (!isStaff() || e.button !== 0) return;
+  const card = e.target.closest('.kb-card');
+  if (!card || e.target.closest('button,textarea,input,a') || card.dataset.id.indexOf('tmp_') === 0) return;
+  const touch = e.pointerType !== 'mouse', sx = e.clientX, sy = e.clientY;
+  let timer = 0, started = false;
+  const begin = ev => {
+    started = true;
+    const r = card.getBoundingClientRect(), g = card.cloneNode(true);
+    g.classList.add('kb-drag'); g.classList.remove('hold', 'flash'); g.style.width = r.width + 'px'; g.style.left = '0'; g.style.top = '0';
+    document.body.appendChild(g);
+    KB.drag = { card: card, ghost: g, id: card.dataset.id, grp: card.closest('.kb-grp').dataset.g, from: card.closest('.kb-col').dataset.col, ox: sx - r.left, oy: sy - r.top, over: null, trash: false };
+    card.classList.remove('hold'); card.classList.add('ghosted'); document.body.classList.add('kb-dragging'); kbTrash(true);
+    if (navigator.vibrate) try { navigator.vibrate(10); } catch (x) { }
+    kbMove(ev);
+  };
+  const move = ev => {
+    if (!started) { const dd = Math.hypot(ev.clientX - sx, ev.clientY - sy); if (touch) { if (dd > 8) stop(); return; } if (dd > 5) begin(ev); return; }
+    ev.preventDefault(); kbMove(ev);
+  };
+  const stop = () => { clearTimeout(timer); card.classList.remove('hold'); removeEventListener('pointermove', move); removeEventListener('pointerup', up); removeEventListener('pointercancel', up); };
+  const up = ev => { stop(); if (started) kbDrop(ev); };
+  if (touch) { card.classList.add('hold'); timer = setTimeout(() => begin({ clientX: sx, clientY: sy }), 300); }
+  addEventListener('pointermove', move, { passive: false }); addEventListener('pointerup', up); addEventListener('pointercancel', up);
+}
+function kbMove(ev) {
+  const D = KB.drag; if (!D) return;
+  D.ghost.style.transform = `translate(${Math.round(ev.clientX - D.ox)}px,${Math.round(ev.clientY - D.oy)}px) rotate(2.5deg) scale(1.03)`;
+  const el = document.elementFromPoint(ev.clientX, ev.clientY), tr = el && el.closest('#kbTrash');
+  let col = !tr && el ? el.closest('[data-col]') : null;
+  if (col && (!col.closest('.kb-grp') || col.closest('.kb-grp').dataset.g !== D.grp)) col = null;
+  if (D.over !== col) { if (D.over) D.over.classList.remove('over'); if (col) col.classList.add('over'); D.over = col; }
+  D.trash = !!tr; const t = $('#kbTrash'); if (t) t.classList.toggle('over', D.trash);
+  clearTimeout(D.tabT);
+  if (col && col.hasAttribute('data-ktab') && !col.classList.contains('on')) D.tabT = setTimeout(() => { if (KB.drag && KB.drag.over === col) col.click(); }, 550);
+  if (ev.clientY < 90) scrollBy(0, -12); else if (ev.clientY > innerHeight - 90) scrollBy(0, 12);
+}
+function kbDrop() {
+  const D = KB.drag; if (!D) return;
+  KB.drag = null; KB.swallow = Date.now() + 350; clearTimeout(D.tabT);
+  D.ghost.remove(); D.card.classList.remove('ghosted'); document.body.classList.remove('kb-dragging'); kbTrash(false);
+  if (D.over) D.over.classList.remove('over');
+  if (D.trash) return programDel(D.id);
+  const to = D.over && D.over.dataset.col;
+  if (to && to !== D.from) kbMoveTo(D.id, to, false);
+}
+function kbMoveTo(id, to, keepFocus) {
+  const p = S.prog && S.prog.rows.find(x => x.ID === id); if (!p || p.Status === to) return;
+  const prev = { Status: p.Status, TglRealisasi: p.TglRealisasi };
+  p.Status = to; p.TglRealisasi = to === 'Selesai' ? todayStr() : '';
+  const g = (p.Bagian + '|' + (p.SubBagian || ''));
+  (S.kbTab = S.kbTab || {})[g] = to;
+  const patch = d => { const r = d.rows.find(x => x.ID === id); if (r) { r.Status = p.Status; r.TglRealisasi = p.TglRealisasi; } };
+  dcPatch('program.list', {}, patch);
+  paintPrograms();
+  const card = () => $(`#progList .kb-card[data-id="${CSS.escape(id)}"]`);
+  const c = card(); if (c) { c.classList.add('saving', 'flash'); if (keepFocus) c.focus(); }
+  toast('Dipindah ke ' + KOL_LBL[to] + (to === 'Selesai' ? ' \u00B7 tanggal selesai: hari ini' : '') + '.', 'ok');
+  apiM('program.status', { id: id, status: to }, true).then(r => { programUpdated(r.data); const c2 = card(); if (c2 && keepFocus) c2.focus(); }).catch(e => {
+    Object.assign(p, prev); dcPatch('program.list', {}, patch); paintPrograms();
+    toast('Gagal memindah program: ' + e.message, 'err');
+  });
+}
+function kbNew(col) {
+  if (!col || col.querySelector('.kb-new')) return;
+  const add = col.querySelector('[data-kadd]'); if (add) add.hidden = true;
+  col.insertAdjacentHTML('beforeend', `<div class="kb-new"><textarea placeholder="Tulis nama program\u2026 (Enter untuk simpan)" aria-label="Nama program baru" maxlength="200"></textarea><div class="row-f"><button type="button" class="btn-x btn-o btn-sm" data-kncancel>Batal</button><button type="button" class="btn-x btn-o btn-sm" data-knfull title="Isi form lengkap">Form lengkap</button><button type="button" class="btn-x btn-p btn-sm" data-knsave><i class="bi bi-plus-lg"></i> Tambah</button></div></div>`);
+  const ta = col.querySelector('.kb-new textarea'); ta.focus();
+  AppState.uiDirty = true;
+}
+function kbNewClose(col) { const n = col && col.querySelector('.kb-new'); if (n) n.remove(); const a = col && col.querySelector('[data-kadd]'); if (a) a.hidden = false; }
+function kbNewCtx(col) {
+  const g = col.closest('.kb-grp').dataset.g, i = g.indexOf('|'), b = g.slice(0, i), k = g.slice(i + 1), st = col.dataset.col;
+  const sb = ((S.prog && S.prog.sub) || []).find(x => x.Bagian === b && x.Nama === k && x.Status === 'Aktif');
+  return { Bagian: b, SubBagianID: sb ? sb.ID : '', SubBagian: sb ? '' : k, Status: st, Tanggal: todayStr() };
+}
+function kbNewFull(col) { const ctx = kbNewCtx(col), ta = col.querySelector('.kb-new textarea'); ctx.Uraian = ta ? ta.value.trim() : ''; kbNewClose(col); programForm(null, ctx); }
+function kbNewSave(col) {
+  const ta = col.querySelector('.kb-new textarea'), text = ta ? ta.value.trim() : '';
+  if (!text) { if (ta) ta.focus(); return; }
+  const ctx = kbNewCtx(col);
+  if (!ctx.SubBagianID && !ctx.SubBagian) return kbNewFull(col);
+  ctx.Uraian = text;
+  const tmp = Object.assign({ ID: 'tmp_' + Date.now(), SubBagian: ctx.SubBagian || col.closest('.kb-grp').dataset.g.split('|').slice(1).join('|'), PenanggungJawab: '', Durasi: '', FotoBefore: '', FotoDuring: '', FotoAfter: '', TglRealisasi: ctx.Status === 'Selesai' ? todayStr() : '' }, ctx);
+  tmp.SubBagian = tmp.SubBagian || ctx.SubBagian;
+  S.prog.rows.unshift(tmp); paintPrograms();
+  apiM('program.save', ctx, true).then(r => {
+    const i = S.prog.rows.indexOf(tmp); if (i >= 0) S.prog.rows.splice(i, 1);
+    programUpdated(r.data); toast('Program "' + text + '" ditambahkan.', 'ok');
+  }).catch(e => {
+    const i = S.prog.rows.indexOf(tmp); if (i >= 0) S.prog.rows.splice(i, 1); paintPrograms();
+    toast('Program belum tersimpan: ' + e.message, 'err');
+  });
 }
 function findProg(id) {
-  return (S.prog && S.prog.rows.find(x => x.ID === id)) || (S.dash && S.dash.d.programByBagian && S.dash.d.programByBagian.flatMap(g => g.items).find(x => x.ID === id));
+  return (S.prog && S.prog.rows.find(x => x.ID === id)) || ((dcPeek('program.list', {}) || { rows: [] }).rows.find(x => x.ID === id)) || null;
 }
 function programUpdated(rec) {
-  if (S.prog) { const i = S.prog.rows.findIndex(x => x.ID === rec.ID); if (i >= 0) S.prog.rows[i] = rec; }
-  if (S.dash && S.dash.d.programByBagian) S.dash.d.programByBagian.forEach(g => { const i = g.items.findIndex(x => x.ID === rec.ID); if (i >= 0) g.items[i] = rec; });
-  const el = $('#prog_' + rec.ID);
-  if (el) { if (AppState.page === 'program') paintPrograms(); else if (AppState.page === 'dashboard' && $('#dashProgs')) setDashProg(S.dashProg || 'ini'); else { const par = el.parentElement; el.outerHTML = programCard(rec); loadThumbs(par); } }
+  if (!rec || !rec.ID) return;
+  if (S.prog) { const i = S.prog.rows.findIndex(x => x.ID === rec.ID); if (i >= 0) S.prog.rows[i] = rec; else S.prog.rows.unshift(rec); }
+  dcPatch('program.list', {}, d => { const i = d.rows.findIndex(x => x.ID === rec.ID); if (i >= 0) d.rows[i] = rec; else d.rows.unshift(rec); });
+  if (AppState.page === 'program' && $('#progList')) paintPrograms();
+  vwRefreshProg(rec.ID, rec);
 }
-async function uploadSlot(pid, slot, el) {
-  const f = await pickImage(); if (!f) return;
-  el.classList.add('up'); el.dataset.st = 'Menyiapkan foto\u2026';
+
+/* \u2500\u2500 antrean unggah foto di latar: pengguna tidak perlu menunggu \u2500\u2500 */
+const UPQ = { jobs: [], run: false };
+AppState.full = {};
+function fullPut(u, d) { if (!u || !d) return; AppState.full[u] = d; const ks = Object.keys(AppState.full); if (ks.length > 8) delete AppState.full[ks[0]]; }
+function upEnqueue(pid, slot, c, label) {
+  UPQ.jobs = UPQ.jobs.filter(j => !(j.pid === pid && j.slot === slot));
+  UPQ.jobs.push({ pid: pid, slot: slot, c: c, label: label || '', err: '' });
+  upPaint(); upTouched(pid); upRun();
+}
+function upTouched(pid) { if (AppState.page === 'program' && $('#progList')) paintPrograms(); vwRefreshProg(pid); }
+async function upRun() {
+  if (UPQ.run) return; UPQ.run = true;
   try {
-    toast('Mengompres foto\u2026');
-    const c = await compressImage(f);
-    el.dataset.st = 'Mengunggah ' + c.kb + ' KB\u2026';
-    const r = await apiM('program.foto', { id: pid, slot: slot, data: c.data, mime: c.mime });
-    toast('Foto ' + slot + ' tersimpan \u00B7 ' + c.kb + ' KB', 'ok');
-    programUpdated(r.data);
-  } catch (e) { toast(e.message, 'err'); el.classList.remove('up'); }
+    for (;;) {
+      const j = UPQ.jobs.find(x => !x.err); if (!j) break;
+      try {
+        const r = await apiM('program.foto', { id: j.pid, slot: j.slot, data: j.c.data, mime: j.c.mime, thumb: j.c.thumb }, true);
+        const rec = r.data, url = rec['Foto' + j.slot], m = fotoMetaOf(rec)[j.slot], th = m && m.th;
+        const seed = {}; if (url) seed[url] = j.c.thumbUrl; if (th) seed[th] = j.c.thumbUrl;
+        Object.keys(seed).forEach(u => { AppState.img[u] = seed[u]; }); thPutMany(seed); fullPut(url, j.c.preview);
+        const k = UPQ.jobs.indexOf(j); if (k >= 0) UPQ.jobs.splice(k, 1);
+        programUpdated(rec);
+        toast('Foto ' + j.slot + ' tersimpan' + (j.label ? ' \u00B7 ' + j.label : '') + ' (' + j.c.kb + ' KB)', 'ok');
+      } catch (e) { j.err = e.message || 'Gagal'; toast('Foto ' + j.slot + ' belum terunggah: ' + j.err, 'err'); upTouched(j.pid); }
+      upPaint();
+    }
+  } finally { UPQ.run = false; upPaint(); }
 }
-function programKosong() {
-  const s = S.dash && S.dash.d.subKosong[0];
-  programForm(null, s ? { Bagian: 'Tambal Sulam', SubBagianID: s.ID } : null);
+function upRetry() { UPQ.jobs.forEach(j => { j.err = ''; }); upPaint(); upRun(); }
+function upDrop() { const ids = UPQ.jobs.filter(j => j.err).map(j => j.pid); UPQ.jobs = UPQ.jobs.filter(j => !j.err); upPaint(); ids.forEach(upTouched); }
+function upPaint() {
+  let el = $('#upq'); const n = UPQ.jobs.length, bad = UPQ.jobs.filter(j => j.err).length;
+  if (!n) { if (el) el.remove(); return; }
+  if (!el) { el = document.createElement('div'); el.id = 'upq'; el.className = 'upq'; el.setAttribute('role', 'status'); el.setAttribute('aria-live', 'polite'); document.body.appendChild(el); }
+  el.classList.toggle('err', bad === n);
+  el.innerHTML = bad === n ? `<i class="bi bi-exclamation-triangle-fill"></i><span>${bad} foto gagal diunggah</span><button type="button" onclick="upRetry()">Ulangi</button><button type="button" onclick="upDrop()">Buang</button>`
+    : `<span class="spin-sm"></span><span>Mengunggah ${n - bad} foto di latar\u2026 boleh lanjut bekerja</span>${bad ? `<button type="button" onclick="upRetry()">Ulangi ${bad} gagal</button>` : ''}`;
 }
+window.addEventListener('beforeunload', e => { if (UPQ.jobs.length) { e.preventDefault(); e.returnValue = ''; } });
+async function uploadSlot(pid, slot, camera) {
+  const f = await pickImage(camera); if (!f) return;
+  try {
+    const c = await compressImage(f), p = findProg(pid);
+    upEnqueue(pid, slot, c, p ? (p.Uraian || p.SubBagian) : '');
+  } catch (e) { toast(e.message, 'err'); }
+}
+
+/* \u2500\u2500 penampil foto (gaya thumbnail viewer) \u2500\u2500 */
+const VW = { imgs: [], i: 0, opt: {} };
+async function imgThumb(u) {
+  if (!u) return null;
+  if (AppState.img[u]) return AppState.img[u];
+  const m = await thGetMany([u]); if (m[u]) { AppState.img[u] = m[u]; return m[u]; }
+  const d = (await apiM('file.get', { url: u, thumb: 1 }, true)).data.dataUrl;
+  if (d) { AppState.img[u] = d; if (d.length < 400000) thPutMany({ [u]: d }); }
+  return d;
+}
+async function imgFull(u) {
+  if (AppState.full[u]) return AppState.full[u];
+  const d = (await apiM('file.get', { url: u }, true)).data.dataUrl;
+  fullPut(u, d); return d;
+}
+function viewerOpen(imgs, i, opt) {
+  VW.imgs = imgs; VW.i = Math.max(0, Math.min(i || 0, imgs.length - 1)); VW.opt = opt || {}; VW.back = document.activeElement;
+  let el = $('#vw');
+  if (!el) {
+    el = document.createElement('div'); el.id = 'vw'; el.className = 'vw'; el.setAttribute('role', 'dialog'); el.setAttribute('aria-modal', 'true'); el.setAttribute('aria-labelledby', 'vwT');
+    el.addEventListener('click', vwClick); el.addEventListener('keydown', vwKey);
+    el.addEventListener('pointerdown', e => { const st = e.target.closest('.vw-stage'); VW.sw = st ? { x: e.clientX, y: e.clientY } : null; });
+    el.addEventListener('pointerup', e => { if (!VW.sw) return; const dx = e.clientX - VW.sw.x, dy = e.clientY - VW.sw.y; VW.sw = null; if (Math.abs(dx) > 50 && Math.abs(dx) > Math.abs(dy) * 1.5) vwGo(VW.i + (dx < 0 ? 1 : -1)); });
+    document.body.appendChild(el);
+  }
+  document.body.classList.add('vw-open');
+  vwRender();
+  const x = el.querySelector('[data-vx]'); if (x) x.focus();
+}
+function viewerClose() { const el = $('#vw'); if (el) el.remove(); document.body.classList.remove('vw-open'); const b = VW.back; VW.imgs = []; if (b && b.focus && document.body.contains(b)) b.focus(); }
+function vwGo(i) { const n = VW.imgs.length; if (!n) return; VW.i = (i + n) % n; vwRender(); }
+function vwKey(e) {
+  if (e.key === 'Escape') { e.preventDefault(); viewerClose(); }
+  else if (e.key === 'ArrowRight') { e.preventDefault(); vwGo(VW.i + 1); }
+  else if (e.key === 'ArrowLeft') { e.preventDefault(); vwGo(VW.i - 1); }
+  else if (e.key === 'Tab') { const f = $$('#vw button,#vw a').filter(x => !x.disabled); if (!f.length) return; const a = f[0], z = f[f.length - 1]; if (e.shiftKey && document.activeElement === a) { e.preventDefault(); z.focus(); } else if (!e.shiftKey && document.activeElement === z) { e.preventDefault(); a.focus(); } }
+}
+function vwClick(e) {
+  if (e.target.id === 'vw' || e.target.closest('[data-vx]')) return viewerClose();
+  if (e.target.closest('[data-vp]')) return vwGo(VW.i - 1);
+  if (e.target.closest('[data-vn]')) return vwGo(VW.i + 1);
+  const th = e.target.closest('[data-vi]'); if (th) return vwGo(Number(th.dataset.vi));
+  const it = VW.imgs[VW.i]; if (!it) return;
+  const up = e.target.closest('[data-vup]'); if (up) return uploadSlot(it.pid, it.slot, up.dataset.vup === 'cam');
+  if (e.target.closest('[data-vdel]')) return deleteSlot(it.pid, it.slot);
+  if (e.target.closest('[data-vdl]')) return vwDownload(it);
+  if (e.target.closest('[data-vprog]')) { S.progFocus = it.pid; viewerClose(); navigateTo('program'); }
+}
+async function vwDownload(it) {
+  try { const d = await imgFull(it.url); const a = document.createElement('a'); a.href = d; a.download = String(it.title + ' ' + it.slot).replace(/[^\w\- ]+/g, '').trim().replace(/\s+/g, '_') + '.jpg'; document.body.appendChild(a); a.click(); a.remove(); }
+  catch (e) { toast('Foto belum bisa diunduh: ' + e.message, 'err'); }
+}
+function vwRender() {
+  const el = $('#vw'); if (!el) return;
+  const n = VW.imgs.length, it = VW.imgs[VW.i], o = VW.opt, p2 = x => ('0' + x).slice(-2);
+  if (!it) return viewerClose();
+  const can = !!o.canEdit && isStaff(), pend = it.pending;
+  const stage = it.url || pend
+    ? `<img id="vwImg" alt="${E(it.title + ' \u2014 ' + (it.slot || ''))}" draggable="false" ${pend ? `src="${pend}"` : AppState.full[it.url] ? `src="${AppState.full[it.url]}"` : AppState.img[it.th || it.url] ? `src="${AppState.img[it.th || it.url]}"` : ''}><span class="vg"></span>${pend ? '<span class="vw-spin pill pill-info"><span class="spin-sm"></span> Mengunggah\u2026</span>' : ''}`
+    : `<div class="vw-none"><i class="bi bi-camera"></i><b>Foto ${E(it.slot)} belum ada</b>${can ? `<div class="row-f gap1 wrap" style="justify-content:center"><button type="button" class="btn-x btn-p btn-sm" data-vup="cam"><i class="bi bi-camera-fill"></i> Kamera</button><button type="button" class="btn-x btn-o btn-sm" data-vup="file"><i class="bi bi-image"></i> Pilih dari galeri</button></div>` : ''}</div>`;
+  const acts = [];
+  if (it.url && !pend) acts.push(`<button type="button" class="btn-x btn-o btn-sm" data-vdl><i class="bi bi-download"></i> Unduh</button>`);
+  if (can && it.url && !pend) acts.push(`<button type="button" class="btn-x btn-o btn-sm" data-vup="cam"><i class="bi bi-camera"></i> Ganti</button><button type="button" class="btn-x btn-o btn-sm" data-vup="file" aria-label="Ganti dari galeri"><i class="bi bi-image"></i></button><button type="button" class="btn-x btn-d btn-sm" data-vdel><i class="bi bi-trash"></i> Hapus</button>`);
+  if (o.dock && it.pid && isStaff()) acts.push(`<button type="button" class="btn-x btn-o btn-sm" data-vprog><i class="bi bi-kanban"></i> Lihat programnya</button>`);
+  el.innerHTML = `<div class="vw-card"><div class="vw-h"><div style="min-width:0"><small>${E(o.kicker || 'Dokumentasi foto')}</small><h2 id="vwT">${E(o.title || it.title)}</h2><p>${E(o.sub || it.sub || '')}</p></div><div class="row-f gap1"><span class="vw-ct">${p2(VW.i + 1)}<span> / ${p2(n)}</span></span><button type="button" class="vw-x" data-vx aria-label="Tutup penampil foto"><i class="bi bi-x-lg"></i></button></div></div>
+    <div class="vw-stage" role="tabpanel">${stage}<div class="vw-loc">${it.slot ? `<span class="pill">${E(it.slot)}</span>` : ''}<span>${E(o.title ? (it.loc || '') : (it.sub || ''))}</span></div><div class="vw-nav"><button type="button" data-vp aria-label="Foto sebelumnya"${n < 2 ? ' disabled' : ''}><i class="bi bi-chevron-left"></i></button><button type="button" data-vn aria-label="Foto berikutnya"${n < 2 ? ' disabled' : ''}><i class="bi bi-chevron-right"></i></button></div></div>
+    <div class="vw-cap" aria-live="polite"><h3>${E(it.slot ? it.slot + ' \u00B7 ' + it.title : it.title)}</h3><div class="acts">${acts.join('')}</div></div>
+    <div class="vw-th" role="tablist" aria-label="Pilih foto">${VW.imgs.map((x, k) => { const src = x.pending || AppState.img[x.th || x.url] || ''; return `<button type="button" role="tab" aria-selected="${k === VW.i}" class="${k === VW.i ? 'on' : ''}" data-vi="${k}" aria-label="${E((x.slot || '') + ' ' + x.title)}"${src ? '' : ` data-vneed="${k}"`}>${src ? `<img alt="" src="${src}">` : x.url ? '<span class="e"><span class="spin-sm"></span></span>' : '<span class="e"><i class="bi bi-plus-lg"></i></span>'}<span>${p2(k + 1)}${x.slot ? ' ' + x.slot[0] : ''}</span></button>`; }).join('')}</div>
+    <div class="vw-f"><span>${E(o.foot || 'Geser foto atau pakai tombol panah untuk berpindah')}</span><span>${E(it.meta || '')}</span></div></div>`;
+  vwLoad();
+}
+async function vwLoad() {
+  const it = VW.imgs[VW.i], idx = VW.i;
+  $$('#vw [data-vneed]').forEach(async b => { const x = VW.imgs[Number(b.dataset.vneed)]; if (!x || !x.url) return; try { const d = await imgThumb(x.th || x.url); if (d && document.body.contains(b)) b.innerHTML = `<img alt="" src="${d}"><span>${('0' + (Number(b.dataset.vneed) + 1)).slice(-2)}${x.slot ? ' ' + x.slot[0] : ''}</span>`; } catch (e) { } });
+  if (!it || !it.url || it.pending) return;
+  const img = $('#vwImg'); if (!img) return;
+  try {
+    if (!img.getAttribute('src')) { const t = await imgThumb(it.th || it.url); if (VW.i === idx && img.isConnected && t && !img.getAttribute('src')) img.src = t; }
+    if (!AppState.full[it.url]) { const f = await imgFull(it.url); if (VW.i === idx && img.isConnected && f) img.src = f; }
+  } catch (e) { if (VW.i === idx && img.isConnected && !img.getAttribute('src')) img.replaceWith(Object.assign(document.createElement('div'), { className: 'vw-none', innerHTML: `<i class="bi bi-wifi-off"></i><b>Foto belum bisa dimuat</b>${E(e.message)}` })); }
+}
+function progImgs(p) {
+  const m = fotoMetaOf(p);
+  return FT.map(f => {
+    const s = f[0], job = UPQ.jobs.find(j => j.pid === p.ID && j.slot === s && !j.err), mm = m[s] || {};
+    return { slot: s, url: p['Foto' + s] || '', th: mm.th || '', pending: job ? job.c.preview : '', title: p.Uraian || p.SubBagian, pid: p.ID, loc: p.SubBagian, meta: mm.t ? 'Diunggah ' + fdate(String(mm.t).slice(0, 10)) + ' ' + String(mm.t).slice(11, 16) + (mm.by ? ' oleh ' + mm.by : '') : '' };
+  });
+}
+function viewerProg(pid, slot) {
+  const p = findProg(pid); if (!p) return toast('Program tidak ditemukan. Muat ulang halaman.', 'err');
+  const imgs = progImgs(p), n = imgs.filter(x => x.url || x.pending).length;
+  let i = slot ? imgs.findIndex(x => x.slot === slot) : imgs.findIndex(x => x.url || x.pending); if (i < 0) i = 0;
+  viewerOpen(imgs, i, { kicker: 'Before \u00B7 During \u00B7 After \u00B7 ' + n + ' dari 3 foto', title: p.Uraian || p.SubBagian, sub: p.Bagian + ' \u00B7 ' + p.SubBagian + ' \u00B7 ' + (KOL_LBL[p.Status] || p.Status), canEdit: true, pid: pid, foot: isStaff() ? 'Foto dikompres otomatis lalu diunggah di latar \u2014 tidak perlu menunggu.' : '' });
+}
+function vwRefreshProg(pid, rec) {
+  if (!$('#vw') || !VW.opt || VW.opt.pid !== pid) return;
+  const p = rec || findProg(pid); if (!p) return;
+  const slot = (VW.imgs[VW.i] || {}).slot, imgs = progImgs(p), n = imgs.filter(x => x.url || x.pending).length;
+  VW.imgs = imgs; VW.i = Math.max(0, imgs.findIndex(x => x.slot === slot));
+  VW.opt.kicker = 'Before \u00B7 During \u00B7 After \u00B7 ' + n + ' dari 3 foto';
+  vwRender();
+}
+
+function programKosong() { programForm(null, { Bagian: 'Tambal Sulam' }); }
 const subOpts = list => list.filter(x => x.Status === 'Aktif').map(x => ({ v: x.ID, l: x.Bagian + ' \u00B7 ' + x.Nama }));
 async function programForm(rec, preset) {
   const pl = dcPeek('program.list', {});
@@ -1324,7 +1841,8 @@ async function programForm(rec, preset) {
     { k: 'SubBagian', l: 'Lokasi (jika tidak memilih sub-bagian)', full: true, ph: 'Mis. Gedung Baru Lt. 2' },
     { k: 'Uraian', l: 'Nama program', req: true, full: true, ph: 'Mis. Perbaikan di garasi Rumah Ust Aris' }, { k: 'PenanggungJawab', l: 'Jumlah pekerja', full: true, ph: 'Mis. Pak Sriyanto CS ( 4 orang )' },
     { k: 'Durasi', l: 'Durasi pekerjaan', ph: 'Mis. 1 Hari' }, { k: 'MaterialKet', l: 'Material', ph: 'Mis. Barang Bekas' },
-    { k: 'Status', l: 'Status', t: 'select', opts: [{ v: 'Direncanakan', l: 'Direncanakan' }, { v: 'Berjalan', l: 'Proses' }, { v: 'Selesai', l: 'Selesai' }] }
+    { k: 'Status', l: 'Kolom', t: 'select', opts: KOL.map(c => ({ v: c[0], l: c[1] })) },
+    { k: 'TglRealisasi', l: 'Tanggal selesai (untuk Hasil Usaha)', t: 'date', help: 'Kosongkan: otomatis hari ini saat masuk Hasil Usaha.' }
   ];
   if (!rec) { S.pf = Object.assign({}, (preset && preset.__foto) || {}); fields.push({ k: 'pfoto', t: 'html', html: pfHtml() }); }
   if (preset) delete preset.__foto;
@@ -1333,21 +1851,21 @@ async function programForm(rec, preset) {
     values: rec || Object.assign({ Tanggal: todayStr(), Bagian: 'Proyek', Status: 'Berjalan' }, preset || {}),
     save: async d => {
       if (rec) d.ID = rec.ID;
+      if (d.Status !== 'Selesai') d.TglRealisasi = '';
       const r = await apiM('program.save', d);
       const fotos = rec ? [] : ['Before', 'During', 'After'].filter(k => (S.pf || {})[k]);
-      for (let i = 0; i < fotos.length; i++) {
-        toast('Mengunggah foto ' + fotos[i] + ' (' + (i + 1) + '/' + fotos.length + ')\u2026');
-        const pfEl = $('#pf_' + fotos[i]); if (pfEl) { pfEl.classList.add('up'); pfEl.dataset.st = 'Mengunggah\u2026'; }
-        await apiM('program.foto', { id: r.data.ID, slot: fotos[i], data: S.pf[fotos[i]].data, mime: S.pf[fotos[i]].mime });
-      }
+      fotos.forEach(k => upEnqueue(r.data.ID, k, S.pf[k], r.data.Uraian));
       S.pf = {}; const dest = S.camForm ? 'program' : AppState.page; S.camForm = false;
-      toast(r.message + (fotos.length ? ' ' + fotos.length + ' foto tersimpan.' : ''), 'ok'); closeModal(); navigateTo(dest);
+      programUpdated(r.data);
+      toast(r.message + (fotos.length ? ' ' + fotos.length + ' foto sedang diunggah di latar.' : ''), 'ok'); closeModal(); navigateTo(dest);
     }
   });
+  const stEl = $('#f_Status'), trEl = $('#f_TglRealisasi');
+  if (stEl && trEl) { const sync = () => { trEl.closest('div').style.display = stEl.value === 'Selesai' ? '' : 'none'; }; stEl.addEventListener('change', sync); sync(); }
 }
 const PF_LBL = { Before: 'Sebelum (Before)', During: 'Proses (During)', After: 'Selesai (After)' };
 function pfHtml() {
-  return `<div class="full"><span class="lbl">Foto dokumentasi <span class="muted fw6">(opsional)</span></span><div class="pf-grid">${['Before', 'During', 'After'].map(k => `<div class="pf-slot" id="pf_${k}">${pfSlotHtml(k)}</div>`).join('')}</div></div>`;
+  return `<div class="full"><span class="lbl">Foto dokumentasi <span class="muted fw6">(opsional \u00B7 diunggah di latar setelah disimpan)</span></span><div class="pf-grid">${['Before', 'During', 'After'].map(k => `<div class="pf-slot" id="pf_${k}">${pfSlotHtml(k)}</div>`).join('')}</div></div>`;
 }
 function pfSlotHtml(k) {
   const c = (S.pf || {})[k];
@@ -1356,7 +1874,7 @@ function pfSlotHtml(k) {
 }
 async function pfPick(k, camera) {
   const f = await pickImage(camera); if (!f) return;
-  const el = $('#pf_' + k); if (el) el.classList.add('up');
+  const el = $('#pf_' + k); if (el) { el.classList.add('up'); el.dataset.st = 'Mengompres\u2026'; }
   try { (S.pf = S.pf || {})[k] = await compressImage(f); } catch (e) { toast(e.message, 'err'); }
   if (el) { el.classList.remove('up'); el.innerHTML = pfSlotHtml(k); }
 }
@@ -1364,6 +1882,7 @@ function pfClear(k) { delete (S.pf || {})[k]; const el = $('#pf_' + k); if (el) 
 function cameraStart() {
   pickImage(true).then(async f => {
     if (!f) return;
+    toast('Menyiapkan foto\u2026');
     try { S.cam = { foto: await compressImage(f), slot: '' }; } catch (e) { return toast(e.message, 'err'); }
     camReview();
   });
@@ -1371,12 +1890,12 @@ function cameraStart() {
 function camReview() {
   openModal({
     title: 'Periksa foto',
-    body: `<img class="preview-img" style="max-height:52vh" alt="Foto yang baru diambil" src="${S.cam.foto.preview}"><p class="tc muted mt1">Apakah foto sudah sesuai? \u00B7 ${S.cam.foto.kb} KB</p>`,
+    body: `<img class="preview-img" style="max-height:52vh" alt="Foto yang baru diambil" src="${S.cam.foto.preview}"><p class="tc muted mt1">Apakah foto sudah sesuai? \u00B7 sudah dikompres ${S.cam.foto.kb} KB</p>`,
     footer: `<button class="btn-x btn-o" onclick="cameraStart()"><i class="bi bi-arrow-counterclockwise"></i> Ulangi</button><button class="btn-x btn-p" onclick="camJenis()"><i class="bi bi-check2"></i> Sesuai, lanjut</button>`
   });
 }
 const camSort = rows => rows.slice().sort((a, b) => ((a.Status === 'Selesai') - (b.Status === 'Selesai')) || b.Tanggal.localeCompare(a.Tanggal));
-const camOpts = rows => rows.map(p => `<label class="cam-opt" data-q="${E(((p.Uraian || '') + ' ' + p.SubBagian + ' ' + p.Bagian).toLowerCase())}"><input type="radio" name="camPid" value="${p.ID}"><span><b>${E(p.Uraian || p.SubBagian)}</b><small>${E(p.SubBagian + ' \u00B7 ' + p.Bagian + ' \u00B7 ' + (p.Status === 'Berjalan' ? 'Proses' : p.Status))}</small></span></label>`).join('');
+const camOpts = rows => rows.map(p => `<label class="cam-opt" data-q="${E(((p.Uraian || '') + ' ' + p.SubBagian + ' ' + p.Bagian).toLowerCase())}"><input type="radio" name="camPid" value="${p.ID}"><span><b>${E(p.Uraian || p.SubBagian)}</b><small>${E(p.SubBagian + ' \u00B7 ' + p.Bagian + ' \u00B7 ' + (KOL_LBL[p.Status] || p.Status))} \u00B7 foto ${FT.filter(f => p['Foto' + f[0]]).length}/3</small></span></label>`).join('');
 async function camJenis() {
   const pc = dcPeek('program.list', {});
   let rows = camSort((pc && pc.rows) || (S.prog && S.prog.rows) || []);
@@ -1390,37 +1909,84 @@ async function camJenis() {
   });
   openModal({
     title: 'Jenis foto',
-    body: `<div class="row-f gap2 mb2"><img alt="" src="${S.cam.foto.preview}" style="width:84px;height:63px;object-fit:cover;border-radius:.5rem;flex:none"><div class="muted">Pilih jenis foto, lalu tentukan programnya.</div></div>
+    body: `<div class="row-f gap2 mb2"><img alt="" src="${S.cam.foto.preview}" style="width:84px;height:63px;object-fit:cover;border-radius:.5rem;flex:none"><div class="muted">Pilih jenis foto, lalu tentukan programnya. Foto diunggah di latar, Anda bisa langsung lanjut.</div></div>
       <span class="lbl">Jenis foto <span style="color:#dc2626">*</span></span>
       <div class="cam-jenis" role="radiogroup">${['Before', 'During', 'After'].map(k => `<button type="button" class="cj" data-cj="${k}" role="radio" aria-checked="false" onclick="camSetJenis('${k}')"><b>${k}</b><span>${E(PF_LBL[k].split(' ')[0])}</span></button>`).join('')}</div>
       <span class="lbl mt2">Simpan ke</span>
-      <label class="li" style="cursor:pointer"><input type="radio" name="camTo" value="baru" checked onchange="camTo()"> <b>Program baru</b> <span class="muted">\u2014 isi form Tambah program</span></label>
-      <label class="li" style="cursor:pointer"><input type="radio" name="camTo" value="ada" onchange="camTo()"${rows.length ? '' : ' disabled'}> <b>Program yang sudah ada</b></label>
-      <div id="camProgBox" hidden><input class="inp mt1" id="camQ" type="search" placeholder="Ketik nama program atau sub-bagian\u2026" oninput="camFilter()" aria-label="Cari program"><div class="cam-list" id="camProg" role="radiogroup">${camOpts(rows)}</div><div class="muted tc" id="camNone" hidden style="padding:.5rem;font-size:12px">Tidak ada program yang cocok.</div></div>`,
-    footer: `<button class="btn-x btn-o" onclick="camReview()">Kembali</button><button class="btn-x btn-p" onclick="camNext(this)"><i class="bi bi-arrow-right"></i> Lanjut</button>`
+      <label class="li" style="cursor:pointer"><input type="radio" name="camTo" value="ada" onchange="camTo()"${rows.length ? ' checked' : ' disabled'}> <b>Program yang sudah ada</b></label>
+      <label class="li" style="cursor:pointer"><input type="radio" name="camTo" value="baru" onchange="camTo()"${rows.length ? '' : ' checked'}> <b>Program baru</b> <span class="muted">\u2014 isi form Tambah program</span></label>
+      <div id="camProgBox"${rows.length ? '' : ' hidden'}><input class="inp mt1" id="camQ" type="search" placeholder="Ketik nama program atau sub-bagian\u2026" oninput="camFilter()" aria-label="Cari program"><div class="cam-list" id="camProg" role="radiogroup">${camOpts(rows)}</div><div class="muted tc" id="camNone" hidden style="padding:.5rem;font-size:12px">Tidak ada program yang cocok.</div></div>`,
+    footer: `<button class="btn-x btn-o" onclick="camReview()">Kembali</button><button class="btn-x btn-p" onclick="camNext(this)"><i class="bi bi-cloud-arrow-up"></i> Simpan foto</button>`
   });
 }
 function camSetJenis(k) { S.cam.slot = k; $$('.cj').forEach(b => { const on = b.dataset.cj === k; b.classList.toggle('on', on); b.setAttribute('aria-checked', on); }); }
-function camTo() { const ada = ($('input[name="camTo"]:checked') || {}).value === 'ada'; $('#camProgBox').hidden = !ada; if (ada) setTimeout(() => { const q = $('#camQ'); if (q) q.focus(); }, 50); }
+function camTo() { const ada = ($('input[name="camTo"]:checked') || {}).value === 'ada'; $('#camProgBox').hidden = !ada; if (ada) setTimeout(() => { const q = $('#camQ'); if (q && matchMedia('(pointer:fine)').matches) q.focus(); }, 50); }
 function camFilter() { const q = $('#camQ').value.trim().toLowerCase(); let n = 0; $$('.cam-opt').forEach(el => { const hit = !q || el.dataset.q.indexOf(q) >= 0; el.hidden = !hit; if (hit) n++; }); $('#camNone').hidden = n > 0; }
-function camNext(btn) {
+function camNext() {
   if (!S.cam.slot) return toast('Pilih jenis foto dulu: Before, During, atau After.', 'err');
   const ada = ($('input[name="camTo"]:checked') || {}).value === 'ada';
   if (!ada) { const fo = {}; fo[S.cam.slot] = S.cam.foto; S.camForm = true; return programForm(null, { __foto: fo }); }
-  return act(btn, async () => {
-    const pick = $('input[name="camPid"]:checked'); if (!pick) throw new Error('Pilih programnya dulu.');
-    const id = pick.value;
-    const r = await apiM('program.foto', { id: id, slot: S.cam.slot, data: S.cam.foto.data, mime: S.cam.foto.mime });
-    toast(r.message, 'ok'); closeModal(); S.cam = null; navigateTo('program');
-  });
+  const pick = $('input[name="camPid"]:checked'); if (!pick) return toast('Pilih programnya dulu.', 'err');
+  const p = findProg(pick.value);
+  upEnqueue(pick.value, S.cam.slot, S.cam.foto, p ? (p.Uraian || p.SubBagian) : '');
+  toast('Foto ' + S.cam.slot + ' sedang diunggah di latar. Silakan lanjut bekerja.', 'ok');
+  closeModal(); S.cam = null;
 }
-const programEdit = id => programForm(findProg(id));
-function programDoc(id, btn) {
-  return act(btn, async () => { toast('Menyusun laporan Google Docs\u2026'); const r = await apiM('program.exportDoc', { id: id }); showExport(r.data, 'Buka Google Docs'); });
-}
+const programEdit = id => { const p = findProg(id); if (p) programForm(p); };
 async function programDel(id) {
   if (!(await confirmBox('Hapus program kerja ini beserta catatannya? Foto di Drive tidak ikut terhapus.', 'Ya, hapus'))) return;
-  await act(null, async () => { const r = await apiM('program.delete', { id: id }); toast(r.message, 'ok'); navigateTo(AppState.page); });
+  await act(null, async () => { const r = await apiM('program.delete', { id: id }); toast(r.message, 'ok'); if (S.prog) S.prog.rows = S.prog.rows.filter(x => x.ID !== id); dcPatch('program.list', {}, d => { d.rows = d.rows.filter(x => x.ID !== id); }); navigateTo(AppState.page); });
+}
+
+/* \u2500\u2500 Export Docs mingguan \u2500\u2500 */
+function lapWeeks() {
+  const cur = cycStart(todayStr()), mg = (S.prog && S.prog.minggu) || null, out = [];
+  const no = (b, st) => { if (!mg) return 0; const pat = b === 'Proyek' ? mg.pr.patokan : mg.ts.patokan; if (!pat) return 0; const n = Math.floor((parseD(st) - parseD(cycStart(pat))) / (7 * 864e5)) + 1; return n < 1 ? 1 : n; };
+  for (let i = 0; i < 16; i++) { const st = addD(cur, -7 * i); out.push({ st: st, ts: no('Tambal Sulam', st), pr: no('Proyek', st), lbl: (i === 0 ? 'Minggu ini' : i === 1 ? 'Minggu lalu' : fdate(st)) }); }
+  return out;
+}
+function lapOpen() {
+  S.lap = S.lap || { bag: 'Semua', foto: 'minggu', start: cycStart(todayStr()) };
+  const L = S.lap, wk = lapWeeks();
+  openModal({
+    title: 'Export Docs mingguan', size: 'lg',
+    body: `<div class="form-grid"><div class="full"><label class="lbl" for="lapW">Minggu laporan (Kamis\u2013Rabu)</label><select class="inp" id="lapW" onchange="S.lap.start=this.value;lapPreview()">${wk.map(w => `<option value="${w.st}"${w.st === L.start ? ' selected' : ''}>${E(w.lbl)} \u00B7 TS ke-${w.ts || '\u2013'} \u00B7 Proyek ke-${w.pr || '\u2013'} \u00B7 ${fdate(w.st)} \u2013 ${fdate(addD(w.st, 6))}</option>`).join('')}</select></div>
+      <div><span class="lbl">Bagian</span><div class="seg-b" role="group">${['Semua', 'Tambal Sulam', 'Proyek'].map(b => `<button type="button" class="${L.bag === b ? 'on' : ''}" data-lbag="${b}" onclick="S.lap.bag='${b}';$$('[data-lbag]').forEach(x=>x.classList.toggle('on',x.dataset.lbag==='${b}'));lapPreview()">${b === 'Semua' ? 'TS + Proyek' : E(b)}</button>`).join('')}</div></div>
+      <div><span class="lbl">Foto yang dimasukkan</span><label class="row-f gap1" style="cursor:pointer;font-size:13.5px"><input type="radio" name="lapF" value="minggu"${L.foto === 'minggu' ? ' checked' : ''} onchange="S.lap.foto='minggu';lapPreview()"> Hanya yang diunggah minggu ini</label><label class="row-f gap1" style="cursor:pointer;font-size:13.5px"><input type="radio" name="lapF" value="semua"${L.foto === 'semua' ? ' checked' : ''} onchange="S.lap.foto='semua';lapPreview()"> Semua foto</label></div></div>
+      <p class="help">Isi dokumen: <b>halaman ringkasan</b> (A. Hasil Usaha, B. Proses, C. Program Kerja \u2014 per sub-bagian, bernomor), lalu <b>halaman foto</b> Hasil Usaha, Proses, dan Program Kerja yang berfoto. Urutan sub-bagian: Tambal Sulam, Pengelasan, Perairan, Pelistrikan, Perkayuan, Pertamanan, Kamar Mandi, TPS, lalu lainnya. Hasil Usaha selalu memuat foto lengkapnya; Proses &amp; Program Kerja hanya foto baru minggu itu, agar tidak terulang.</p>
+      <div id="lapPrev" class="mt1"></div>`,
+    footer: `<button class="btn-x btn-o" data-bs-dismiss="modal">Batal</button><button class="btn-x btn-g" id="lapGo" onclick="lapExport(this)" disabled><i class="bi bi-file-earmark-word"></i> Buat Google Docs</button>`
+  });
+  lapPreview();
+}
+async function lapPreview() {
+  const box = $('#lapPrev'); if (!box) return;
+  const L = S.lap, key = JSON.stringify(L); S.lapKey = key;
+  box.innerHTML = '<div class="muted"><span class="spin-sm"></span> Menghitung isi laporan\u2026</div>'; const go = $('#lapGo'); if (go) go.disabled = true;
+  try {
+    const r = await api('program.laporan', { start: L.start, bagian: L.bag, foto: L.foto }, true);
+    if (S.lapKey !== key || !$('#lapPrev')) return;
+    S.lapRes = r;
+    const tot = r.reduce((n, x) => n + x.total, 0), foto = r.reduce((n, x) => n + x.foto, 0);
+    const est = Math.max(10, Math.round(6 + foto * 1.2 + tot * 0.25));
+    box.innerHTML = r.map(b => `<div class="mb2"><div class="row-f between wrap gap1"><b>${E(b.bagian)} \u00B7 Minggu ke-${b.weekNo}</b><span class="muted" style="font-size:12px">${fdate(b.start)} \u2013 ${fdate(b.end)}</span></div><div class="lap-sum">${[['hasil', 'Hasil Usaha'], ['proses', 'Proses'], ['rencana', 'Program Kerja']].map(k => `<div><span>${k[1]}</span><b>${b.seksi[k[0]].program}</b><span class="muted">${b.seksi[k[0]].halaman} halaman foto \u00B7 ${b.seksi[k[0]].foto} foto</span></div>`).join('')}</div>
+      <details><summary class="link-btn" style="cursor:pointer">Lihat daftar program</summary><div class="lap-list">${[['hasil', 'A. HASIL USAHA'], ['proses', 'B. PROSES'], ['rencana', 'C. PROGRAM KERJA']].map(k => `<h5>${k[1]}</h5>${b.seksi[k[0]].sub.length ? b.seksi[k[0]].sub.map(g => `${g.sub ? `<div class="ls">${E(g.sub)}</div>` : ''}<ol>${g.items.map(i => `<li>${E(i.uraian)}${b.bagian === 'Proyek' ? ' <span class="fx">(' + E(i.lokasi) + ')</span>' : ''} ${i.foto.length ? '<span class="fx">\u00B7 foto ' + E(i.foto.join(', ')) + '</span>' : ''}</li>`).join('')}</ol>`).join('') : '<div class="fx">(tidak ada)</div>'}`).join('')}</div></details></div>`).join('') +
+      `<div class="pill ${tot ? 'pill-info' : 'pill-warn'}">${tot ? tot + ' program \u00B7 ' + foto + ' foto \u00B7 perkiraan \u00B1' + est + ' detik' : 'Tidak ada program pada minggu ini'}</div>`;
+    if (go) go.disabled = !tot;
+  } catch (e) { if ($('#lapPrev')) box.innerHTML = `<div class="err-box">${E(e.message)}</div>`; }
+}
+function lapExport(btn) {
+  const L = Object.assign({}, S.lap), r = S.lapRes || [], foto = r.reduce((n, x) => n + x.foto, 0), tot = r.reduce((n, x) => n + x.total, 0);
+  const est = Math.max(10, Math.round(6 + foto * 1.2 + tot * 0.25));
+  return act(btn, async () => {
+    openModal({ title: 'Menyusun laporan Docs', body: `<div class="exp-prog"><div class="exp-ring"></div><div><b>${E(L.bag === 'Semua' ? 'Tambal Sulam + Proyek' : L.bag)} \u00B7 ${fdate(L.start)} \u2013 ${fdate(addD(L.start, 6))}</b><p class="muted" style="margin:.25rem 0 0">${tot} program, ${foto} foto. Perkiraan \u00B1${est} detik.</p><div class="exp-bar"><span id="expBar"></span></div><p class="muted" id="expTime" style="margin:.35rem 0 0;font-size:12px">0 detik</p></div></div><p class="help mt2">Google Docs menyisipkan foto satu per satu, jadi makin banyak foto makin lama. Jendela ini boleh ditutup; proses tetap berjalan dan tautan muncul setelah selesai.</p>` });
+    const t0 = Date.now(), tick = setInterval(() => { const d = Math.round((Date.now() - t0) / 1000), el = $('#expTime'), bar = $('#expBar'); if (el) el.textContent = d + ' detik' + (d > est ? ' \u00B7 sedikit lebih lama dari perkiraan, mohon tunggu' : ''); if (bar) bar.style.width = Math.min(95, Math.round(d / est * 100)) + '%'; }, 1000);
+    try {
+      const res = await apiM('program.exportWeekly', { start: L.start, bagian: L.bag, foto: L.foto }, false, { timeout: 340000 });
+      clearInterval(tick); showExport(res.data, 'Buka Google Docs');
+      if (res.data.terpotong) toast(res.message, 'err');
+    } catch (e) { clearInterval(tick); closeModal(); throw e; }
+  });
 }
 async function subManage() {
   const list = await api('sub.list'); S.subs = list;
@@ -1720,7 +2286,112 @@ document.addEventListener('keydown', e => {
   if ((e.key === 'Enter' || e.key === ' ') && e.target.matches && e.target.matches('.slot[data-preview]')) { e.preventDefault(); e.target.click(); }
   if (e.key === 'Escape') closeDrawer();
 });
+const WA_CARD = [['kirim', 'bi-truck', 'Barang untuk dikirim', 'Pesanan Toko KUK yang belum dikirim, per lokasi & pemesan'], ['hadir', 'bi-people', 'Kehadiran harian', 'Jumlah hadir shift pagi & siang, izin, ghoib'], ['keuangan', 'bi-wallet2', 'Rekap keuangan', 'Tambal Sulam & Proyek: minggu ini, sebelumnya, total'], ['tagihan', 'bi-receipt', 'Tagihan Toko KUK', 'Barang terkirim yang belum dibayar, per bagian']];
+PAGES.wa = async function () {
+  const c = await api('wa.config');
+  S.wa = { c: c };
+  return { html: waHtml(), init: () => { if (S.waSel) waPick(S.waSel, true); } };
+};
+function waHtml() {
+  const c = S.wa.c;
+  const warn = !c.ada ? `<div class="banner" role="status"><i class="bi bi-plug"></i><div class="grow"><b>WhatsApp belum terhubung</b><div class="t2">${isSuper() ? 'Isi token Fonnte dan daftar grup tujuan di bagian Pengaturan di bawah.' : 'Minta Super Admin mengisi token Fonnte di menu ini.'} Sementara itu pesan tetap bisa disusun lalu disalin.</div></div></div>`
+    : !c.targets.length ? `<div class="banner" role="status"><i class="bi bi-people"></i><div class="grow"><b>Belum ada grup tujuan</b><div class="t2">${isSuper() ? 'Tambahkan grup tujuan di Pengaturan di bawah.' : 'Minta Super Admin menambahkan grup tujuan.'}</div></div></div>` : '';
+  return `<div class="page-head"><div><h1>Kirim WhatsApp</h1><p>Susun laporan otomatis dari data SIMOP, periksa, lalu kirim ke grup WhatsApp lewat Fonnte. Teks bisa diubah sebelum dikirim.</p></div></div>${warn}
+  <div class="wa-grid" role="group" aria-label="Jenis pesan">${WA_CARD.map(x => `<button type="button" class="wa-card${S.waSel === x[0] ? ' on' : ''}" data-waj="${x[0]}" onclick="waPick('${x[0]}')"><i class="bi ${x[1]}"></i><b>${E(x[2])}</b><span>${E(x[3])}</span></button>`).join('')}</div>
+  <div id="waBox">${S.waSel ? '' : `<div class="card-x">${emptyBox('Pilih jenis pesan di atas', 'Pesan disusun otomatis dari data terbaru.')}</div>`}</div>
+  ${isSuper() ? waSetHtml() : ''}`;
+}
+function waPick(j, keep) {
+  S.waSel = j;
+  $$('[data-waj]').forEach(b => b.classList.toggle('on', b.dataset.waj === j));
+  const c = S.wa.c, opt = j === 'hadir' ? `<input type="date" class="inp" style="width:auto" id="waTgl" value="${E((S.waOpt && S.waOpt.tgl) || todayStr())}" onchange="waLoad()" aria-label="Tanggal">` : j === 'keuangan' ? `<select class="inp" style="width:auto" id="waWk" onchange="waLoad()" aria-label="Minggu"><option value="${cycStart(todayStr())}">Minggu ini</option><option value="${addD(cycStart(todayStr()), -7)}">Minggu lalu</option></select>` : '';
+  const card = WA_CARD.find(x => x[0] === j);
+  $('#waBox').innerHTML = `<div class="wa-wrap fade-in"><section class="card-x"><div class="card-h"><div><h2>${E(card[2])}</h2><p>Teks bisa diubah. Format WhatsApp: *tebal*, _miring_.</p></div><div class="row-f gap1 wrap">${opt}<button type="button" class="btn-x btn-o btn-sm" onclick="waLoad()"><i class="bi bi-arrow-clockwise"></i> Susun ulang</button></div></div>
+      <textarea class="inp" id="waText" rows="16" style="font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:13px" oninput="waBubble()" aria-label="Teks pesan"></textarea>
+      <div class="row-f gap1 wrap mt1"><button type="button" class="btn-x btn-o btn-sm" onclick="waCopy()"><i class="bi bi-clipboard"></i> Salin teks</button>${navigator.share ? '<button type="button" class="btn-x btn-o btn-sm" onclick="waShare()"><i class="bi bi-share"></i> Bagikan\u2026</button>' : ''}<span class="muted" id="waLen" style="font-size:12px;margin-left:auto"></span></div></section>
+    <section class="card-x"><div class="card-h"><div><h2>Pratinjau &amp; kirim</h2><p>Begini tampilan pesan di WhatsApp.</p></div></div><div class="wa-phone"><div class="wa-bub" id="waBub"><span class="spin-sm"></span> Menyusun pesan\u2026</div></div>
+      <span class="lbl mt2">Kirim ke</span>${c.targets.length ? `<div class="wa-tg">${c.targets.map((t, i) => `<label><input type="checkbox" class="check" value="${E(t.id)}"${i === 0 ? ' checked' : ''}> ${E(t.nama)}<small>${E(t.id.replace(/@g\.us$/, ' (grup)'))}</small></label>`).join('')}</div>` : '<div class="muted" style="font-size:13px">Belum ada tujuan terdaftar.</div>'}
+      <button type="button" class="btn-x btn-g mt2" style="width:100%" id="waGo" onclick="waSendUI(this)"${c.ada && c.targets.length ? '' : ' disabled'}><i class="bi bi-whatsapp"></i> Kirim lewat Fonnte</button></section></div>`;
+  if (!keep || !S.waText) waLoad(); else { $('#waText').value = S.waText; waBubble(); }
+}
+async function waLoad() {
+  const j = S.waSel, ta = $('#waText'); if (!j || !ta) return;
+  const p = { jenis: j };
+  if (j === 'hadir' && $('#waTgl')) { p.tanggal = $('#waTgl').value; S.waOpt = { tgl: p.tanggal }; }
+  if (j === 'keuangan' && $('#waWk')) p.start = $('#waWk').value;
+  ta.disabled = true; $('#waBub').innerHTML = '<span class="spin-sm"></span> Menyusun pesan\u2026';
+  try {
+    const r = await api('wa.preview', p, true);
+    if (S.waSel !== j || !$('#waText')) return;
+    ta.value = r.text; S.waText = r.text; waBubble();
+  } catch (e) { $('#waBub').innerHTML = `<span style="color:#b91c1c">${E(e.message)}</span>`; }
+  finally { if ($('#waText')) $('#waText').disabled = false; }
+}
+function waFmt(t) {
+  return E(t).replace(/\*([^*\n]+)\*/g, '<b>$1</b>').replace(/(^|[\s(])_([^_\n]+)_/g, '$1<i>$2</i>').replace(/~([^~\n]+)~/g, '<s>$1</s>');
+}
+function waBubble() {
+  const t = ($('#waText') || {}).value || ''; S.waText = t;
+  const b = $('#waBub'); if (b) b.innerHTML = t ? waFmt(t) : '<span class="muted">(pesan kosong)</span>';
+  const l = $('#waLen'); if (l) { l.textContent = t.length.toLocaleString('id-ID') + ' / 6.000 huruf'; l.style.color = t.length > 6000 ? '#dc2626' : ''; }
+}
+function waCopy() {
+  const t = ($('#waText') || {}).value || ''; if (!t) return;
+  (navigator.clipboard ? navigator.clipboard.writeText(t) : Promise.reject()).then(() => toast('Teks pesan disalin. Tempel di WhatsApp.', 'ok')).catch(() => { const ta = $('#waText'); ta.select(); toast('Tekan Ctrl+C / tahan lalu Salin.'); });
+}
+function waShare() { const t = ($('#waText') || {}).value || ''; if (t && navigator.share) navigator.share({ text: t }).catch(() => { }); }
+function waSendUI(btn) {
+  return act(btn, async () => {
+    const t = ($('#waText') || {}).value.trim(), tg = $$('.wa-tg input:checked').map(x => x.value);
+    if (!t) throw new Error('Pesan masih kosong.');
+    if (t.length > 6000) throw new Error('Pesan terlalu panjang (maks. 6.000 huruf).');
+    if (!tg.length) throw new Error('Centang minimal satu grup tujuan.');
+    const nama = tg.map(id => (S.wa.c.targets.find(x => x.id === id) || { nama: id }).nama);
+    if (!(await confirmBox('Kirim pesan ini ke <b>' + E(nama.join(', ')) + '</b>?', 'Ya, kirim'))) return;
+    let ok = 0;
+    for (const id of tg) {
+      try { const r = await apiM('wa.send', { target: id, text: t, jenis: S.waSel }); ok++; toast(r.message, 'ok'); }
+      catch (e) { toast('Gagal ke ' + ((S.wa.c.targets.find(x => x.id === id) || {}).nama || id) + ': ' + e.message, 'err'); }
+    }
+    if (ok === tg.length) toast('Semua pesan terkirim (' + ok + ').', 'ok');
+  });
+}
+const waRow = (t) => `<div class="row-t"><input class="inp wa-n" placeholder="Nama, mis. Grup Pembangunan G3" value="${E((t && t.nama) || '')}" maxlength="60" aria-label="Nama tujuan"><input class="inp wa-i" placeholder="ID grup (\u2026@g.us) atau nomor 62812\u2026" value="${E((t && t.id) || '')}" aria-label="ID tujuan" autocomplete="off"><button type="button" class="icon-btn" onclick="this.parentElement.remove()" aria-label="Hapus tujuan"><i class="bi bi-x-lg"></i></button></div>`;
+function waSetHtml() {
+  const c = S.wa.c;
+  return `<section class="card-x wa-set mt2" id="waSet"><div class="card-h"><div class="row-f gap2"><div class="ico"><i class="bi bi-gear"></i></div><div><h2>Pengaturan Fonnte</h2><p>Khusus Super Admin. Token disimpan di server dan tidak ditampilkan utuh.</p></div></div></div>
+    <div class="form-grid" style="max-width:760px"><div class="full"><label class="lbl" for="waTok">Token Fonnte</label><input class="inp" id="waTok" type="password" autocomplete="off" placeholder="${c.ada ? 'Tersimpan: ' + E(c.token) + ' \u2014 isi untuk mengganti' : 'Tempel token dari fonnte.com'}"><div class="help">Cara mendapatkan: masuk ke fonnte.com \u2192 menu <b>Device</b> \u2192 hubungkan nomor WhatsApp (scan QR) \u2192 salin <b>Token</b>.</div></div></div>
+    <span class="lbl mt2">Tujuan pesan (grup atau nomor)</span><div id="waRows" style="max-width:760px">${(c.targets.length ? c.targets : [null]).map(waRow).join('')}</div>
+    <div class="row-f gap1 wrap"><button type="button" class="btn-x btn-o btn-sm" onclick="$('#waRows').insertAdjacentHTML('beforeend',waRow())"><i class="bi bi-plus-lg"></i> Tambah tujuan</button><button type="button" class="btn-x btn-o btn-sm" onclick="waGroupsUI(false,this)"${c.ada ? '' : ' disabled title="Simpan token dulu"'}><i class="bi bi-list-ul"></i> Ambil daftar grup</button><button type="button" class="btn-x btn-o btn-sm" onclick="waGroupsUI(true,this)"${c.ada ? '' : ' disabled'} title="Gunakan sekali saat baru bergabung ke grup"><i class="bi bi-arrow-repeat"></i> Perbarui dari WhatsApp</button></div>
+    <div id="waGrp" class="mt1"></div>
+    <div class="row-f gap1 wrap mt2"><button type="button" class="btn-x btn-p" onclick="waSaveCfg(this,false)"><i class="bi bi-save"></i> Simpan pengaturan</button>${c.ada ? '<button type="button" class="btn-x btn-d btn-sm" onclick="waSaveCfg(this,true)"><i class="bi bi-trash"></i> Hapus token</button>' : ''}</div></section>`;
+}
+function waRowsGet() { return $$('#waRows .row-t').map(r => ({ nama: r.querySelector('.wa-n').value.trim(), id: r.querySelector('.wa-i').value.trim() })).filter(x => x.id); }
+function waSaveCfg(btn, hapus) {
+  return act(btn, async () => {
+    if (hapus && !(await confirmBox('Hapus token Fonnte? Pengiriman WhatsApp akan berhenti sampai token diisi lagi.', 'Ya, hapus'))) return;
+    const r = await apiM('wa.configSave', { token: hapus ? '' : $('#waTok').value.trim(), hapusToken: !!hapus, targets: waRowsGet() });
+    toast(r.message, 'ok'); dcPatch('wa.config', {}, d => Object.assign(d, r.data)); navigateTo('wa', { force: true });
+  });
+}
+function waGroupsUI(refresh, btn) {
+  return act(btn, async () => {
+    if (refresh && !(await confirmBox('Minta Fonnte memperbarui daftar grup dari WhatsApp? Lakukan hanya bila baru bergabung ke grup baru (terlalu sering bisa membuat nomor diblokir).', 'Ya, perbarui'))) return;
+    const r = await apiM('wa.groups', { refresh: !!refresh });
+    const gs = r.data.groups;
+    $('#waGrp').innerHTML = gs.length ? `<div class="wa-tg" style="max-width:760px">${gs.map(g => `<label><span class="grow">${E(g.nama)}</span><small>${E(g.id)}</small><button type="button" class="btn-x btn-o btn-sm" onclick="waAddGrp(this)" data-id="${E(g.id)}" data-nama="${E(g.nama)}"><i class="bi bi-plus-lg"></i> Pakai</button></label>`).join('')}</div>` : '<div class="muted">Tidak ada grup. Pastikan nomor WhatsApp sudah bergabung ke grupnya, lalu tekan "Perbarui dari WhatsApp".</div>';
+  });
+}
+function waAddGrp(b) {
+  if (waRowsGet().some(x => x.id === b.dataset.id)) return toast('Grup ini sudah ada di daftar tujuan.', '');
+  const empty = $$('#waRows .row-t').find(r => !r.querySelector('.wa-i').value.trim());
+  if (empty) { empty.querySelector('.wa-n').value = b.dataset.nama; empty.querySelector('.wa-i').value = b.dataset.id; }
+  else $('#waRows').insertAdjacentHTML('beforeend', waRow({ nama: b.dataset.nama, id: b.dataset.id }));
+  toast('Ditambahkan. Klik "Simpan pengaturan" agar tersimpan.', 'ok');
+}
+
 (function init() {
+  if ('serviceWorker' in navigator && (location.protocol === 'https:' || /^(localhost|127.0.0.1)$/.test(location.hostname))) window.addEventListener('load', () => { navigator.serviceWorker.register('sw.js').catch(() => { }); });
   let t = 'light';
   try { t = localStorage.getItem('simop-theme') || (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'); } catch (e) { }
   setTheme(t);

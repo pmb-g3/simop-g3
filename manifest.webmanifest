@@ -1,0 +1,22 @@
+{
+  "name": "SIMOP Gontor Kampus 3",
+  "short_name": "SIMOP",
+  "description": "Sistem Informasi Manajemen Operasional Pembangunan Pondok Modern Gontor Kampus 3",
+  "lang": "id",
+  "start_url": "./?pwa=1",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "background_color": "#eef5ff",
+  "theme_color": "#2563eb",
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "icons/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ],
+  "shortcuts": [
+    { "name": "Presensi", "url": "./?go=presensi", "icons": [{ "src": "icons/icon-192.png", "sizes": "192x192" }] },
+    { "name": "Program Kerja", "url": "./?go=program", "icons": [{ "src": "icons/icon-192.png", "sizes": "192x192" }] },
+    { "name": "Pemesanan Material", "url": "./?go=material", "icons": [{ "src": "icons/icon-192.png", "sizes": "192x192" }] }
+  ]
+}

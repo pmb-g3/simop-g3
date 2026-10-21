@@ -54,11 +54,11 @@ async function gasOnce_(body, timeoutMs) {
 }
 
 /** Kirim dengan coba ulang. idem=true: aman diulang (baca). idem=false: tulis, hanya diulang bila jelas belum diproses. */
-async function gasSend_(body, idem) {
+async function gasSend_(body, idem, timeoutMs) {
   const delays = [700, 1800];
   for (let attempt = 0; ; attempt++) {
     try {
-      return await gasOnce_(body, idem ? 60000 : 120000);
+      return await gasOnce_(body, timeoutMs || (idem ? 60000 : 120000));
     } catch (e) {
       const retryable = idem
         ? (e.net || e.bad || e.busy || e.timeout || (e.http && TRANSIENT_HTTP.indexOf(e.http) >= 0))
@@ -79,13 +79,14 @@ function netPump_() {
     if (lane === 2 && NET.inflight > 0) return;
     const job = NET.queue[lane].shift();
     NET.inflight++;
-    gasSend_(job.body, job.idem).then(job.ok, job.fail).finally(() => { NET.inflight--; netPump_(); });
+    gasSend_(job.body, job.idem, job.timeout).then(job.ok, job.fail).finally(() => { NET.inflight--; netPump_(); });
   }
 }
 
 /**
  * POST {fn, args} ke Apps Script. Content-Type WAJIB text/plain agar tidak memicu CORS preflight.
  * opt.prio: 0 = aksi pengguna/halaman aktif, 1 = foto, 2 = prefetch latar.  opt.idem: aman diulang.  opt.track: dihitung di indikator sinkron.
+ * opt.timeout: batas tunggu (ms) untuk aksi panjang, mis. ekspor Docs mingguan.
  */
 function gasPost(fn, args, opt) {
   opt = opt || {};
@@ -104,7 +105,7 @@ function gasPost(fn, args, opt) {
       fnc(v);
     };
     NET.queue[Math.max(0, Math.min(2, opt.prio || 0))].push({
-      body: JSON.stringify({ fn: fn, args: args || [] }), idem: idem,
+      body: JSON.stringify({ fn: fn, args: args || [] }), idem: idem, timeout: opt.timeout || 0,
       ok: v => done(resolve, v, !!(v && v.success !== false)),
       fail: e => done(reject, e, false)
     });
