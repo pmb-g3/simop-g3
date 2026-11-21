@@ -10,7 +10,7 @@ const num = n => Number(n || 0).toLocaleString('id-ID');
 const pad = n => ('0' + n).slice(-2);
 const BLN = ['Jan', 'Feb', 'Mar', 'Apr', 'Mei', 'Jun', 'Jul', 'Agu', 'Sep', 'Okt', 'Nov', 'Des'];
 const HARI = ['Minggu', 'Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat', 'Sabtu'];
-const ROLE_LBL = { superadmin: 'Super Admin / Pimpinan', admin: 'Admin Operasional', toko: 'Toko KUK (Mitra)' };
+const ROLE_LBL = { superadmin: 'Super Admin / Pimpinan', admin: 'Admin Operasional', toko: 'Toko KUK (Mitra)', pengawas: 'Pengawas Piket' };
 const todayStr = () => { const d = new Date(); return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()); };
 const parseD = s => { const a = String(s).slice(0, 10).split('-').map(Number); return Date.UTC(a[0], a[1] - 1, a[2]); };
 const addD = (s, n) => new Date(parseD(s) + n * 864e5).toISOString().slice(0, 10);
@@ -28,7 +28,7 @@ const logoImg = () => { const el = document.getElementById('appLogo'); return el
 const isStaff = () => role() === 'admin' || role() === 'superadmin';
 const isSuper = () => role() === 'superadmin';
 const rowText = r => Object.keys(r).filter(k => typeof r[k] !== 'object').map(k => r[k]).join(' ').toLowerCase();
-const BADGE = { H: ['ok', 'Hadir'], I: ['warn', 'Izin'], A: ['bad', 'Ghoib'], Proses: ['info'], Terkirim: ['ok'], Ditolak: ['bad'], 'Belum Dibayar': ['warn'], 'Telah Dibayar': ['ok'], Aktif: ['ok'], Nonaktif: ['muted'], Ada: ['ok'], 'Tidak Ada': ['warn'], Selesai: ['ok'], Berjalan: ['info', 'Proses'], Direncanakan: ['muted'], 'Tambal Sulam': ['ts'], Proyek: ['brand'], superadmin: ['brand'], admin: ['info'], toko: ['ts'] };
+const BADGE = { H: ['ok', 'Hadir'], I: ['warn', 'Izin'], A: ['bad', 'Ghoib'], Proses: ['info'], Terkirim: ['ok'], Ditolak: ['bad'], 'Belum Dibayar': ['warn'], 'Telah Dibayar': ['ok'], Aktif: ['ok'], Nonaktif: ['muted'], Ada: ['ok'], 'Tidak Ada': ['warn'], Selesai: ['ok'], Berjalan: ['info', 'Proses'], Direncanakan: ['muted'], 'Tambal Sulam': ['ts'], Proyek: ['brand'], superadmin: ['brand'], admin: ['info'], toko: ['ts'], pengawas: ['ok'] };
 const badge = (t, kind) => { const b = BADGE[t] || ['muted']; return `<span class="pill pill-${kind || b[0]}">${E(b[1] || t)}</span>`; };
 
 function loader(d) {
@@ -44,7 +44,7 @@ function toast(msg, type) {
   $('#toasts').appendChild(el);
   setTimeout(() => el.remove(), type === 'err' ? 6500 : 3600);
 }
-const READ_ACT = new Set(['dash.get', 'karyawan.list', 'absensi.get', 'rekap.absensi', 'rekap.bayar', 'rekap.list', 'izin.list', 'sub.list', 'program.list', 'katalog.list', 'material.list', 'piket.list', 'piket.staff', 'keu.list', 'armada.list', 'admin.users', 'admin.audit', 'admin.config', 'pilihan.list', 'minggu.info', 'mat.rekap', 'wa.config']);
+const READ_ACT = new Set(['dash.get', 'karyawan.list', 'absensi.get', 'rekap.absensi', 'rekap.bayar', 'rekap.list', 'izin.list', 'sub.list', 'program.list', 'katalog.list', 'material.list', 'piket.list', 'piket.staff', 'keu.list', 'armada.list', 'admin.users', 'admin.audit', 'admin.config', 'pilihan.list', 'minggu.info', 'mat.rekap', 'wa.config', 'blangko.hari', 'blangko.list', 'blangko.rekap', 'pj.list']);
 const DC = { mem: {}, mode: 'net', changed: false, bg: false, user: '', ver: '', pv: {}, want: null, fresh: null };
 const NOWRITE = new Set(['file.get', 'file.thumbs', 'import.check', 'batch.read', 'sync.ver', 'program.laporan', 'wa.preview', 'wa.groups']);
 const DC_MISS = new Error('cache-miss');
@@ -308,9 +308,9 @@ function renderShell() {
     html += `<button class="nav-item" data-nav="${it.id}" onclick="navigateTo('${it.id}')" title="${E(it.label)}"><i class="bi ${it.icon}"></i><span class="nav-label">${E(it.label)}</span></button>`;
   });
   $('#sidebarNav').innerHTML = html;
-  const pref = ['dashboard', 'presensi', 'program', 'material', 'pembayaran'], have = new Set(m.map(x => x.id));
+  const pref = ['dashboard', 'blangko', 'presensi', 'program', 'material', 'pembayaran'], have = new Set(m.map(x => x.id));
   const bn = pref.filter(p => have.has(p)).slice(0, 4).map(id => m.find(x => x.id === id));
-  const short = l => l.replace('Pemesanan ', '').replace('Pembayaran Material', 'Bayar').replace('Presensi Harian', 'Presensi').replace('Program Kerja', 'Program');
+  const short = l => l.replace('Blangko Pengawasan', 'Blangko').replace('Pemesanan ', '').replace('Pembayaran Material', 'Bayar').replace('Presensi Harian', 'Presensi').replace('Program Kerja', 'Program');
   const navBtn = it => `<button class="bn-item" data-nav="${it.id}" onclick="navigateTo('${it.id}')"><i class="bi ${it.icon}"></i><span>${E(short(it.label))}</span></button>`;
   if (isStaff()) {
     const pick = ['dashboard', 'presensi', 'program'].filter(p => have.has(p)).map(id => m.find(x => x.id === id));
@@ -494,7 +494,8 @@ function isTyping() {
 function uiBusy() {
   return (AppState.uiDirty && Date.now() - (AppState.lastAct || 0) < 1500) || isTyping() || document.body.classList.contains('modal-open') || document.body.classList.contains('drawer-open') ||
     document.body.classList.contains('vw-open') || !!KB.drag || !!document.querySelector('.kb-new') || (AppState.page === 'dashboard' && S.wg && S.wg.edit) ||
-    (AppState.page === 'presensi' && S.pres && S.pres.changed && Object.keys(S.pres.changed).length > 0);
+    (AppState.page === 'presensi' && S.pres && S.pres.changed && Object.keys(S.pres.changed).length > 0) ||
+    (AppState.page === 'blangko' && S.bl && S.bl.tab === 'hari' && (Object.keys(S.bl.dirty || {}).length > 0 || Date.now() - (AppState.lastAct || 0) < 8000));
 }
 async function repaintFromCache() {
   if (!AppState.token || !AppState.page || uiBusy()) return;
@@ -601,7 +602,7 @@ function syncTap() {
   syncErrMsg = ''; onNetState(NET);
   navigateTo(AppState.page, { force: true }).then(ok => { if (ok) toast('Data diperbarui.', 'ok'); else toast('Masih gagal: ' + (AppState.lastNavError || 'server tidak merespons') + '', 'err'); });
 }
-const PREFETCH_ORDER = ['presensi', 'material', 'program', 'pembayaran', 'rekapmat', 'karyawan', 'izin', 'rekap', 'piket', 'armada', 'keuangan', 'dashboard', 'akun'];
+const PREFETCH_ORDER = ['blangko', 'presensi', 'material', 'program', 'pembayaran', 'rekapmat', 'karyawan', 'izin', 'rekap', 'piket', 'armada', 'keuangan', 'dashboard', 'akun'];
 async function prefetchMenus() {
   const have = AppState.menu.map(m => m.id).filter(id => PAGES[id]);
   const ids = PREFETCH_ORDER.filter(id => have.indexOf(id) >= 0).concat(have.filter(id => PREFETCH_ORDER.indexOf(id) < 0));
@@ -682,7 +683,7 @@ function bootHtml() {
   const arcs = [1, 2, 3, 4, 5, 6].map(i => `<span class="arc a${i}"></span>`).join('');
   return `<div class="boot" role="status" aria-live="polite" aria-label="Memuat aplikasi"><div class="boot-stage">${arcs}<div class="boot-logo">${logoImg()}</div></div></div>`;
 }
-const NEED_BUILD = 20261022;
+const NEED_BUILD = 20261121;
 function buildCheck(cfg) {
   const b = Number(cfg && cfg.build || 0), old = $('#buildWarn');
   if (b >= NEED_BUILD) { if (old) old.remove(); return; }
@@ -801,6 +802,7 @@ PAGES.dashboard = async function () {
   const d = await api('dash.get');
   S.dash = { d: d };
   if (d.role === 'toko') return dashToko(d);
+  if (d.role === 'pengawas') return { html: dashPengawas(d), init: () => { } };
   return { html: dashStaff(d), init: dashInit };
 };
 
@@ -821,12 +823,13 @@ const WG_DEF = {
   hadir: { t: 'Kehadiran pekerja', i: 'bi-people-fill', c: 'g', size: 'lg', sizes: ['lg', 'tall', 'wide', 'sm'] },
   keuangan: { t: 'Keuangan TS & Proyek', i: 'bi-wallet2', c: 'w', size: 'wide', sizes: ['wide', 'lg', 'tall', 'sm'] },
   piket: { t: 'Piket hari ini', i: 'bi-clipboard-check', c: '', size: 'sm', sizes: ['sm', 'tall', 'wide'] },
+  blangko: { t: 'Blangko pengawasan', i: 'bi-clipboard2-check', c: 'g', size: 'tall', sizes: ['tall', 'wide', 'sm'] },
   armada: { t: 'Armada', i: 'bi-truck', c: '', size: 'sm', sizes: ['sm', 'tall', 'wide'] },
   material: { t: 'Material hari ini', i: 'bi-box-seam', c: 'w', size: 'full', sizes: ['full', 'lg', 'wide', 'tall'] },
   galeri: { t: 'Galeri program kerja', i: 'bi-images', c: 'v', size: 'xl', sizes: ['xl', 'full', 'lg'] },
   aktivitas: { t: 'Log aktivitas', i: 'bi-activity', c: '', size: 'tall', sizes: ['tall', 'lg', 'wide'], hide: true }
 };
-const WG_ORDER = ['hadir', 'keuangan', 'piket', 'armada', 'material', 'galeri', 'aktivitas'];
+const WG_ORDER = ['hadir', 'keuangan', 'piket', 'blangko', 'armada', 'material', 'galeri', 'aktivitas'];
 const SIZE_LBL = { sm: 'kecil', wide: 'lebar', tall: 'tinggi', lg: 'besar', full: 'selebar layar', xl: 'selebar layar (tinggi)' };
 const wgKey = () => 'simop-wg:' + (AppState.user ? AppState.user.username : '');
 function wgLayout() {
@@ -861,13 +864,14 @@ function wgHead(id, d) {
   if (id === 'hadir') return `<span class="wl">${fdShort(d.tanggal)}</span>` + go('presensi', 'Buka presensi');
   if (id === 'keuangan') return go('keuangan', 'Buka laporan keuangan');
   if (id === 'piket') return go('piket', 'Buka jadwal piket');
+  if (id === 'blangko') return `<span class="wl">${E(d.blangko ? d.blangko.hari : '')}</span>` + go('blangko', 'Buka blangko pengawasan');
   if (id === 'armada') return `<span class="wl">${d.armada.filter(a => a.Status === 'Ada').length}/${d.armada.length} siap</span>` + go('armada', 'Buka status armada');
   if (id === 'material') return `<button type="button" class="wa" onclick="orderForm()" title="Pesan material" aria-label="Pesan material"><i class="bi bi-cart-plus"></i></button>` + go('material', 'Buka pemesanan');
   if (id === 'galeri') return `<span class="wl hide-xs">${d.galeri.auto ? 'Foto terbaru' : d.galeri.items.length + ' program pilihan'}</span><button type="button" class="wa" onclick="galPick()" title="Pilih program untuk galeri" aria-label="Pilih program untuk galeri"><i class="bi bi-sliders"></i></button>`;
   return '';
 }
 function wgBody(id, d) {
-  try { return ({ hadir: wHadir, keuangan: wKeu, piket: wPiket, armada: wArmada, material: wMat, galeri: wGaleri, aktivitas: wAkt })[id](d); }
+  try { return ({ hadir: wHadir, keuangan: wKeu, piket: wPiket, blangko: d2 => blWidget(d2.blangko), armada: wArmada, material: wMat, galeri: wGaleri, aktivitas: wAkt })[id](d); }
   catch (e) { return emptyMini('Data widget belum tersedia.'); }
 }
 function wHadir(d) {
@@ -2234,7 +2238,7 @@ PAGES.akun = async function (o) {
     const u = await api('admin.users'); S.users = u;
     body = `<div class="tools">${searchBox('q_usr', 'tb_usr', 'Cari akun\u2026')}<span class="grow"></span><button class="btn-x btn-p btn-sm" onclick="userForm()"><i class="bi bi-person-plus"></i> Tambah akun</button></div>` + tableHtml('tb_usr', [
       { l: 'Pengguna', f: r => `<div class="row-f gap1"><span class="avatar sm">${E(initials(r.Nama))}</span><div><b>${E(r.Nama)}</b>${r.utama ? ' <span class="pill pill-brand">Utama</span>' : ''}<span class="sub">@${E(r.Username)}</span></div></div>` },
-      { l: 'Peran', f: r => badge(r.Role, r.Role === 'superadmin' ? 'brand' : r.Role === 'admin' ? 'info' : 'ts').replace('>' + r.Role + '<', '>' + (ROLE_LBL[r.Role] || r.Role) + '<') }, { l: 'Status', f: r => badge(r.Status) }, { l: 'Login terakhir', f: r => fdt(r.LastLogin) },
+      { l: 'Peran', f: r => badge(r.Role, r.Role === 'superadmin' ? 'brand' : r.Role === 'admin' ? 'info' : r.Role === 'pengawas' ? 'ok' : 'ts').replace('>' + r.Role + '<', '>' + (ROLE_LBL[r.Role] || r.Role) + '<') }, { l: 'Status', f: r => badge(r.Status) }, { l: 'Login terakhir', f: r => fdt(r.LastLogin) },
       { l: '', f: r => `<div class="actions"><button class="btn-x btn-o btn-sm" onclick="userForm('${r.ID}')"><i class="bi bi-pencil"></i><span class="hide-m">Ubah</span></button><button class="btn-x btn-w btn-sm" onclick="userReset('${r.ID}')"><i class="bi bi-key"></i><span class="hide-m">Reset</span></button>${r.utama || r.ID === AppState.user.id ? '' : `<button class="btn-x btn-d btn-sm" onclick="userDel('${r.ID}')" aria-label="Hapus akun"><i class="bi bi-trash"></i></button>`}</div>` }
     ], u);
   } else if (tab === 'audit') {
@@ -2260,8 +2264,8 @@ async function saveCfg() {
 function userForm(id) {
   const rec = id ? S.users.find(x => x.ID === id) : null;
   const fields = rec
-    ? [{ k: 'Nama', l: 'Nama lengkap', req: true, full: true }, { k: 'Role', l: 'Peran', t: 'select', req: true, dis: rec.utama, opts: [{ v: 'superadmin', l: ROLE_LBL.superadmin }, { v: 'admin', l: ROLE_LBL.admin }, { v: 'toko', l: ROLE_LBL.toko }] }, { k: 'Status', l: 'Status', t: 'select', opts: ['Aktif', 'Nonaktif'], dis: rec.utama, help: rec.utama ? 'Akun utama dilindungi.' : 'Menonaktifkan akun langsung mengakhiri sesinya.' }]
-    : [{ k: 'Username', l: 'Username', req: true, ml: 30, help: 'Huruf kecil, angka, titik, _ atau -.' }, { k: 'Nama', l: 'Nama lengkap', req: true }, { k: 'Role', l: 'Peran', t: 'select', req: true, opts: [{ v: 'admin', l: ROLE_LBL.admin }, { v: 'superadmin', l: ROLE_LBL.superadmin }, { v: 'toko', l: ROLE_LBL.toko }] }, { k: 'Password', l: 'Password awal', t: 'password', req: true, ml: 60, help: 'Minimal 8 karakter.' }];
+    ? [{ k: 'Nama', l: 'Nama lengkap', req: true, full: true }, { k: 'Role', l: 'Peran', t: 'select', req: true, dis: rec.utama, opts: [{ v: 'superadmin', l: ROLE_LBL.superadmin }, { v: 'admin', l: ROLE_LBL.admin }, { v: 'pengawas', l: ROLE_LBL.pengawas }, { v: 'toko', l: ROLE_LBL.toko }] }, { k: 'NoWA', l: 'No. WhatsApp (opsional)', t: 'tel', ml: 20, ph: '08\u2026', help: 'Untuk pengingat piket (tahap berikutnya).' }, { k: 'Status', l: 'Status', t: 'select', opts: ['Aktif', 'Nonaktif'], dis: rec.utama, help: rec.utama ? 'Akun utama dilindungi.' : 'Menonaktifkan akun langsung mengakhiri sesinya.' }]
+    : [{ k: 'Username', l: 'Username', req: true, ml: 30, help: 'Huruf kecil, angka, titik, _ atau -.' }, { k: 'Nama', l: 'Nama lengkap', req: true }, { k: 'Role', l: 'Peran', t: 'select', req: true, opts: [{ v: 'admin', l: ROLE_LBL.admin }, { v: 'superadmin', l: ROLE_LBL.superadmin }, { v: 'pengawas', l: ROLE_LBL.pengawas }, { v: 'toko', l: ROLE_LBL.toko }] }, { k: 'NoWA', l: 'No. WhatsApp (opsional)', t: 'tel', ml: 20, ph: '08\u2026' }, { k: 'Password', l: 'Password awal', t: 'password', req: true, ml: 60, help: 'Minimal 8 karakter.' }];
   openForm({
     title: rec ? 'Ubah akun @' + rec.Username : 'Tambah akun', fields: fields, values: rec || { Role: 'admin' },
     save: async d => { if (rec) { d.ID = rec.ID; if (rec.utama) { d.Role = rec.Role; d.Status = 'Aktif'; } } const r = await apiM('admin.userSave', d); toast(r.message, 'ok'); closeModal(); navigateTo('akun', { tab: 'akun' }); }
@@ -2280,6 +2284,363 @@ async function userDel(id) {
   const u = S.users.find(x => x.ID === id);
   if (!(await confirmBox('Hapus akun <b>@' + E(u.Username) + '</b> secara permanen?', 'Ya, hapus'))) return;
   await act(null, async () => { const r = await apiM('admin.userDelete', { id: id }); toast(r.message, 'ok'); navigateTo('akun', { tab: 'akun' }); });
+}
+
+const BL_SES = [{ k: 'p', n: 'Pagi', a: 'P', m: '08.15', s: '09.00' }, { k: 's', n: 'Siang', a: 'Si', m: '13.00', s: '13.45' }, { k: 'o', n: 'Sore', a: 'So', m: '15.15', s: '16.00' }];
+const fdA = s => fdate(s, 1).replace(/^Minggu/, 'Ahad');
+const BL_SECS = ['km', 'taman', 'bawah'];
+const BL_ST = { Belum: ['muted', 'Belum diisi'], Sebagian: ['info', 'Sedang diisi'], Terkirim: ['ok', 'Diserahkan'], Diperiksa: ['brand', 'Diperiksa'] };
+const blStPill = (st, late) => { const b = BL_ST[st] || ['muted', st || '\u2013']; return `<span class="pill pill-${b[0]}">${E(b[1])}</span>${late ? ' <span class="pill pill-warn">Terlambat</span>' : ''}`; };
+const blKey = t => 'simop-bl:' + (AppState.user ? AppState.user.username : '') + ':' + t;
+function blLocal(t) { try { return JSON.parse(localStorage.getItem(blKey(t)) || 'null'); } catch (e) { return null; } }
+function blLocalPut() {
+  const B = S.bl; if (!B || !B.h) return;
+  try { if (Object.keys(B.dirty).length) localStorage.setItem(blKey(B.h.ctx.tanggal), JSON.stringify({ d: B.d, dirty: B.dirty, base: B.base, t: Date.now() })); else localStorage.removeItem(blKey(B.h.ctx.tanggal)); } catch (e) { }
+}
+function blNorm(d) {
+  d = d || {};
+  d.km = d.km || {}; d.km.n = d.km.n || {};
+  d.taman = d.taman || {}; const T = d.taman;
+  T.apel = Array.isArray(T.apel) ? T.apel : []; for (let i = 0; i < 3; i++) T.apel[i] = T.apel[i] || {};
+  T.titik = T.titik || {}; T.khusus = T.khusus || {};
+  d.bawah = d.bawah || {};
+  return d;
+}
+function blMerge(h) {
+  const srv = (h.rec && h.rec.data) || {}, loc = blLocal(h.ctx.tanggal), d = {}, dirty = {}, base = {}, m = srv._m || {};
+  BL_SECS.forEach(k => {
+    if (loc && loc.dirty && loc.dirty[k] && loc.d && loc.d[k]) { d[k] = loc.d[k]; dirty[k] = 1; base[k] = (loc.base && loc.base[k]) || ''; }
+    else { if (srv[k]) d[k] = clone(srv[k]); base[k] = m[k] ? m[k].t : ''; }
+  });
+  return { d: blNorm(d), dirty: dirty, base: base };
+}
+function blAutoSes(tgl) {
+  if (tgl !== todayStr()) return 'all';
+  const n = new Date(), hm = n.getHours() * 60 + n.getMinutes();
+  return hm < 12 * 60 + 30 ? 'p' : hm < 15 * 60 ? 's' : 'o';
+}
+const blGet = (o, path) => path.split('.').reduce((x, k) => (x == null ? undefined : x[k]), o);
+function blSetPath(o, path, v) { const ks = path.split('.'); let x = o; ks.slice(0, -1).forEach(k => { if (x[k] == null || typeof x[k] !== 'object') x[k] = {}; x = x[k]; }); x[ks[ks.length - 1]] = v; }
+
+PAGES.blangko = async function (o) {
+  o = o || {};
+  const prev = S.bl || {};
+  const B = S.bl = { tab: o.tab || prev.tab || 'hari', tgl: o.tgl || prev.tgl || todayStr(), rk: o.rk || prev.rk || '', ses: prev.ses || '', dirty: {}, base: {}, d: null, h: null };
+  if (B.tab === 'rekap' && !isStaff()) B.tab = 'hari';
+  let body = '';
+  if (B.tab === 'hari') {
+    const h = await api('blangko.hari', { tanggal: B.tgl });
+    B.h = h; B.tgl = h.ctx.tanggal;
+    const mg = blMerge(h); B.d = mg.d; B.dirty = mg.dirty; B.base = mg.base;
+    if (!B.ses || prev.tgl !== B.tgl) B.ses = blAutoSes(B.tgl);
+    body = blHariHtml();
+  } else if (B.tab === 'status') {
+    B.list = await api('blangko.list', {});
+    body = blStatusHtml();
+  } else if (B.tab === 'rekap') {
+    B.rek = await api('blangko.rekap', { start: B.rk || todayStr() });
+    body = blRekapHtml();
+  } else {
+    B.pj = await api('pj.list', {});
+    body = blJadwalHtml();
+  }
+  const tabs = [['hari', 'bi-pencil-square', 'Isi blangko'], ['status', 'bi-list-check', 'Status'], ['rekap', 'bi-table', 'Rekap pekanan'], ['jadwal', 'bi-calendar-week', 'Jadwal PJ']].filter(t => t[0] !== 'rekap' || isStaff());
+  return {
+    html: `<div id="blRoot"><div class="page-head"><div><h1>Blangko pengawasan</h1><p>Pengawas piket Kamar Mandi &amp; Pertamanan \u00B7 3\u00D7 keliling, diserahkan pukul 16.00.</p></div></div>
+    <div class="chips mb2" role="tablist">${tabs.map(t => `<button type="button" class="chip-f${B.tab === t[0] ? ' on' : ''}" role="tab" aria-selected="${B.tab === t[0]}" onclick="navigateTo('blangko',{tab:'${t[0]}'})"><i class="bi ${t[1]}"></i> ${t[2]}</button>`).join('')}</div>${body}</div>`,
+    init: blInit
+  };
+};
+
+const blSeg = (path, val, opts, dis, cls) => `<div class="bl-seg ${cls || ''}" role="group">${opts.map(x => { const v = typeof x === 'string' ? x : x.v, l = typeof x === 'string' ? x : (x.l || x.v), on = val === v; return `<button type="button" class="bl-b v-${v}${on ? ' on' : ''}" data-k="${path}" data-v="${v}" aria-pressed="${on}"${dis ? ' disabled' : ''} title="${E(typeof x === 'string' ? x : x.t || l)}">${l}</button>`; }).join('')}</div>`;
+const blCk = (path, val, label, dis) => `<label class="bl-ck"><input type="checkbox" class="check" data-k="${path}"${val ? ' checked' : ''}${dis ? ' disabled' : ''}> <span>${label}</span></label>`;
+const blIn = (path, val, ph, dis, cls, type) => `<input class="inp inp-sm ${cls || ''}" ${type ? `type="${type}"` : ''} data-k="${path}" value="${E(val || '')}" placeholder="${E(ph || '')}" aria-label="${E(ph || '')}" maxlength="300"${dis ? ' disabled' : ''}>`;
+function blSum(v) { v = v || {}; return BL_SES.map(S2 => `<i class="k-${v[S2.k] || 'x'}">${S2.a} ${v[S2.k] || '\u2013'}</i>`).join(''); }
+const blNeed = v => !!v && ['p', 's', 'o'].some(k => v[k] === 'K') && !String(v.cat || '').trim();
+
+function blHariHtml() {
+  const B = S.bl, h = B.h, c = h.ctx, d = B.d, rec = h.rec || {}, dis = !h.bisa.isi, def = h.def, st = rec.Status || 'Belum';
+  const pj = h.pj, pjNama = pj ? (pj.BadalNama ? pj.BadalNama + ' (badal ' + pj.PJNama + ')' : pj.PJNama) : '';
+  const serah = d.serah || (rec.data && rec.data.serah) || null;
+  const tglIn = `<input type="date" class="inp inp-sm" id="blTgl" value="${E(c.tanggal)}" max="${todayStr()}" aria-label="Pilih tanggal blangko">`;
+  if (c.jumat) return `<section class="card-x"><div class="row-f between wrap gap2"><div class="bl-hari">JUM'AT</div>${tglIn}</div><div class="empty"><i class="bi bi-cup-hot"></i><b>Hari evaluasi mingguan</b>Pekerja KM &amp; pertamanan libur. Tidak ada blangko pada hari Jum'at.</div></section>`;
+  const top = `<section class="card-x bl-top">
+    <div class="bl-kop"><div><div class="k">BAGIAN PEMBANGUNAN \u2014 PMDG KAMPUS 3</div><h2>Blangko harian pengawas piket \u00B7 Kamar Mandi &amp; Pertamanan</h2></div><div class="bl-hari">${E(c.hari.toUpperCase())}</div></div>
+    <div class="bl-isi">
+      <div><span class="lbl">Tanggal</span>${tglIn}</div>
+      <div><span class="lbl">Pengawas</span><b>${E(rec.PengawasNama || pjNama || h.saya.nama)}</b>${pjNama && rec.PengawasNama && rec.PengawasNama !== pjNama ? `<small class="muted d-block">PJ: ${E(pjNama)}</small>` : ''}</div>
+      <div><span class="lbl">Pekan</span><span class="bl-pk"><b class="${c.pekan === 'A' ? 'on' : ''}">A</b><b class="${c.pekan === 'B' ? 'on' : ''}">B</b></span></div>
+      <div><span class="lbl">Diserahkan jam</span><b>${serah ? E(serah.jam) : '\u2013'}</b>${rec.Terlambat === 'Ya' ? ' <span class="pill pill-warn">Terlambat</span>' : ''}</div>
+    </div>
+    <div class="bl-prog"><div class="row-f between gap2 wrap"><span id="blSt">${blStPill(st)}</span><span class="bl-sync" id="blSync" aria-live="polite"></span></div><div class="progress-x" role="progressbar" aria-label="Kelengkapan blangko" aria-valuenow="${rec.Progres || 0}" aria-valuemin="0" aria-valuemax="100"><i id="blBar" style="width:${rec.Progres || 0}%"></i></div><small class="muted" id="blPr">${rec.Progres || 0}% terisi</small></div>
+    ${dis ? `<div class="bl-warn"><i class="bi bi-lock"></i><div>${E(h.bisa.alasan)}${h.bisa.badal ? `<div class="mt1"><button class="btn-x btn-w btn-sm" onclick="blBadal(this)"><i class="bi bi-person-raised-hand"></i> Saya badal hari ini</button></div>` : ''}</div></div>` : ''}
+  </section>`;
+  let no = 0;
+  const rows = c.lok.map(k => {
+    const L = def.lok[k], v = d.km.n[k] || {};
+    no++;
+    const grp = k === 'vvip' ? `<div class="bl-grp">Kerja bakti Kamis 08.30\u201309.30 (dipantau saat keliling pagi)</div>` : '';
+    return grp + `<div class="bl-r${L.kb ? ' kb' : ''}" data-lok="${k}">
+      <span class="bl-no">${no}</span>
+      <div class="bl-nm"><b>${E(L.n)}</b><small>${E(L.p)}</small><span class="bl-sum" data-sum="${k}">${blSum(v)}</span></div>
+      ${BL_SES.map(S2 => `<div class="bl-c c-${S2.k}"><span class="bl-sl">${S2.n}</span>${blSeg('km.n.' + k + '.' + S2.k, v[S2.k], [{ v: 'B', t: 'B = bersih semua' }, { v: 'C', t: 'C = temuan kecil, langsung dibereskan' }, { v: 'K', t: 'K = kotor / pekerja tidak di lokasi' }], dis)}</div>`).join('')}
+      <div class="bl-t">${blIn('km.n.' + k + '.cat', v.cat, 'Temuan & tindak lanjut', dis, 'bl-cat' + (blNeed(v) ? ' need' : ''))}</div>
+    </div>`;
+  }).join('');
+  const ses = B.ses || 'all';
+  const km = `<section class="card-x bl-sec km"><h2><span>A. KAMAR MANDI</span><small>3\u00D7 keliling: pagi 08.15 \u00B7 siang 13.00 \u00B7 sore 15.15</small></h2>
+    <div class="bl-kel" role="group" aria-label="Tampilkan keliling">${BL_SES.map(S2 => `<button type="button" class="chip-f${ses === S2.k ? ' on' : ''}" data-ses="${S2.k}">${S2.n} ${S2.m}</button>`).join('')}<button type="button" class="chip-f${ses === 'all' ? ' on' : ''}" data-ses="all">Semua</button></div>
+    <div class="bl-km ses-${ses}" id="blKm"><div class="bl-r bl-hd" aria-hidden="true"><span>No</span><span>Lokasi (urut rute) \u00B7 Pekerja</span><span>Pagi</span><span>Siang</span><span>Sore</span><span>Temuan &amp; tindak lanjut</span></div>${rows}</div>
+    <div class="bl-cks">${blCk('km.siang', d.km.siang, '<b>Siang:</b> ' + E(c.kmSiang), dis)}${blCk('km.sore', d.km.sore, '<b>Sore:</b> keran &amp; pompa mati', dis)}</div>
+    <p class="bl-ket">${E(def.ket.km)}</p></section>`;
+  const T = d.taman, sus = h.susulan || { titik: [] };
+  const apel = def.tamanPekerja.map((n, i) => { const a = T.apel[i] || {}; return `<tr><td><b>${E(n)}</b></td><td>${blSeg('taman.apel.' + i + '.h', a.h, [{ v: 'Y', l: '\u2713', t: 'Hadir' }, { v: 'T', l: '\u2717', t: 'Tidak hadir' }], dis, 'yn')}</td><td>${blIn('taman.apel.' + i + '.j', a.j, 'Jam datang', dis, 'bl-jam', 'time')}</td><td>${blIn('taman.apel.' + i + '.k', a.k, 'Keterangan', dis)}</td></tr>`; }).join('');
+  const titik = c.titik.map(x => { const v = T.titik[x.no] || {}; return `<tr><td class="n">${x.no}</td><td>${E(x.n)}</td><td>${blSeg('taman.titik.' + x.no + '.t', v.t, [{ v: 'Y', l: 'Ya', t: 'Tuntas' }, { v: 'B', l: 'Blm', t: 'Belum tuntas' }], dis, 'yb')}</td><td>${blIn('taman.titik.' + x.no + '.c', v.c, 'Catatan', dis)}</td></tr>`; }).join('');
+  const kh = T.khusus || {};
+  const tm = `<section class="card-x bl-sec pt"><h2><span>B. PERTAMANAN</span><small>${E(c.zona)} \u00B7 ${E(c.zonaNama)}</small></h2>
+    <div class="tbl-wrap"><table class="tbl nostk bl-tbl bl-ap"><thead><tr><th>Pekerja (apel 07.00)</th><th>Hadir</th><th>Jam datang</th><th>Keterangan</th></tr></thead><tbody>${apel}</tbody></table></div>
+    <div class="bl-cks">${blCk('taman.rute', T.rute, '<b>Pagi:</b> Rute Harian Inti bersih', dis)}${blCk('taman.diZona', T.diZona, '<b>Siang:</b> pekerja di zona hari ini', dis)}${c.truk ? blCk('taman.truk', T.truk, 'Truk sampah jalan', dis) : ''}</div>
+    ${sus.titik.length ? `<div class="bl-sus"><i class="bi bi-arrow-repeat"></i><div><b>Susulan dari ${E(fdA(sus.dari))}:</b> ${sus.titik.map(E).join('; ')}</div></div>` : ''}
+    <h3 class="bl-sub">Titik zona hari ini <small>(dicentang saat keliling sore)</small></h3>
+    <div class="tbl-wrap"><table class="tbl nostk bl-tbl"><thead><tr><th class="n">No</th><th>Titik</th><th>Tuntas</th><th>Catatan</th></tr></thead><tbody>${titik}
+      <tr><td class="n">${c.titik.length + 1}</td><td>${blIn('taman.khusus.tugas', kh.tugas, 'Tugas khusus: \u2026', dis)}</td><td>${blSeg('taman.khusus.t', kh.t, [{ v: 'Y', l: 'Ya', t: 'Tuntas' }, { v: 'B', l: 'Blm', t: 'Belum tuntas' }], dis, 'yb')}</td><td>${blIn('taman.khusus.c', kh.c, 'Catatan', dis)}</td></tr></tbody></table></div>
+    <div class="bl-cks bl-tutup">${blCk('taman.alat', T.alat, 'Alat dicuci &amp; disimpan', dis)}<div class="bl-inl"><span>Mesin rumput:</span>${blSeg('taman.mesin', T.mesin, ['Baik', 'Servis'], dis, 'wd')}</div><div class="bl-inl"><span>Nilai hari ini:</span>${blSeg('taman.nilai', T.nilai, ['B', 'C', 'K'], dis)}</div></div>
+    <p class="bl-ket"><span class="${c.pekan === 'A' ? 'on' : ''}">${E(def.ket.A)}</span> <span class="${c.pekan === 'B' ? 'on' : ''}">${E(def.ket.B)}</span></p></section>`;
+  const per = rec.Status === 'Diperiksa';
+  const bawah = `<section class="bl-bawah">
+    <div class="card-x"><label class="lbl" for="blKer">Kerusakan / kebutuhan material esok hari</label><textarea class="inp" id="blKer" rows="3" data-k="bawah.kerusakan" maxlength="2000"${dis ? ' disabled' : ''}>${E(d.bawah.kerusakan || '')}</textarea></div>
+    <div class="card-x"><label class="lbl" for="blIzin">Pekerja izin / tidak di lokasi / titik susulan</label><textarea class="inp" id="blIzin" rows="3" data-k="bawah.izin" maxlength="2000"${dis ? ' disabled' : ''}>${E(d.bawah.izin || '')}</textarea></div>
+    <div class="card-x bl-ttd"><span class="lbl">Pengawas piket</span>${serah ? `<div><i class="bi bi-check-circle-fill" style="color:var(--em-a)"></i> <b>${E(serah.nama)}</b><small class="muted d-block">Diserahkan pukul ${E(serah.jam)}${rec.Terlambat === 'Ya' ? ' (lewat 16.00)' : ''}</small></div>` : '<div class="muted">Belum diserahkan</div>'}
+      ${!dis ? `<button class="btn-x ${serah ? 'btn-o' : 'btn-p'} btn-sm mt1" onclick="blSerah(this)"><i class="bi bi-send-check"></i> ${serah ? 'Serahkan ulang' : 'Serahkan blangko'}</button>` : ''}</div>
+    <div class="card-x bl-ttd"><span class="lbl">Diperiksa Pelaksana Pembangunan</span>${per ? `<div><i class="bi bi-patch-check-fill" style="color:var(--primary)"></i> <b>${E(rec.DiperiksaOleh)}</b><small class="muted d-block">${E(fdt(rec.DiperiksaPada))}</small>${rec.CatatanPemeriksa ? `<div class="mt1" style="font-size:13px">${E(rec.CatatanPemeriksa)}</div>` : ''}</div>` : '<div class="muted">Belum diperiksa</div>'}
+      ${h.bisa.periksa && (st === 'Terkirim' || per) ? `<button class="btn-x ${per ? 'btn-o' : 'btn-p'} btn-sm mt1" onclick="blPeriksa(this,${per ? 1 : 0})"><i class="bi ${per ? 'bi-unlock' : 'bi-patch-check'}"></i> ${per ? 'Buka kembali' : 'Tandai diperiksa'}</button>` : ''}</div>
+  </section>
+  <div class="row-f gap2 wrap mt2"><button class="btn-x btn-o btn-sm" onclick="blPrint()"><i class="bi bi-printer"></i> Cetak (F4)</button><button class="btn-x btn-o btn-sm" onclick="blReload()"><i class="bi bi-arrow-clockwise"></i> Muat ulang dari server</button></div>`;
+  return top + `<div class="bl-main">${km}${tm}</div>` + bawah;
+}
+
+const BL_FRESH = {};
+function blInit(c0) {
+  const B = S.bl; if (!B) return;
+  const c = $('#blRoot', c0) || c0;
+  if (B.tab === 'hari' && B.h && !B.h.ctx.jumat) {
+    blSyncPaint();
+    if (Object.keys(B.dirty).length) blQueue(400);
+    const tg0 = B.h.ctx.tanggal;
+    if (Date.now() - (BL_FRESH[tg0] || 0) > 15000) {
+      BL_FRESH[tg0] = Date.now();
+      dcFresh('blangko.hari', { tanggal: tg0 }, () => { if (S.bl === B && AppState.page === 'blangko' && !Object.keys(B.dirty).length && !B.saving && !isTyping()) navigateTo('blangko', { tab: 'hari', tgl: tg0 }); });
+    }
+    const tg = $('#blTgl', c); if (tg) tg.addEventListener('change', () => { if (tg.value) navigateTo('blangko', { tab: 'hari', tgl: tg.value }); });
+    c.addEventListener('click', e => {
+      const sb = e.target.closest('[data-ses]');
+      if (sb) { B.ses = sb.dataset.ses; $$('[data-ses]', c).forEach(x => x.classList.toggle('on', x === sb)); const km = $('#blKm', c); km.className = 'bl-km ses-' + B.ses; return; }
+      const b = e.target.closest('.bl-b[data-k]'); if (!b || b.disabled) return;
+      const path = b.dataset.k, cur = blGet(B.d, path), v = cur === b.dataset.v ? '' : b.dataset.v;
+      blSet(path, v);
+      $$('.bl-b', b.parentElement).forEach(x => { const on = x.dataset.v === v; x.classList.toggle('on', on); x.setAttribute('aria-pressed', on); });
+      const m = path.match(/^taman\.apel\.(\d)\.h$/);
+      if (m && v === 'Y' && !blGet(B.d, 'taman.apel.' + m[1] + '.j')) { const n = new Date(), j = pad(n.getHours()) + ':' + pad(n.getMinutes()); blSet('taman.apel.' + m[1] + '.j', j); const ji = $(`[data-k="taman.apel.${m[1]}.j"]`, c); if (ji) ji.value = j; }
+      blRowPaint(path, c);
+    });
+    const onIn = e => {
+      const el = e.target; if (!el.dataset || !el.dataset.k || el.disabled) return;
+      blSet(el.dataset.k, el.type === 'checkbox' ? el.checked : el.value);
+      blRowPaint(el.dataset.k, c);
+    };
+    c.addEventListener('input', e => { if (e.target.type !== 'checkbox') onIn(e); });
+    c.addEventListener('change', e => { if (e.target.type === 'checkbox') onIn(e); });
+  }
+  if (B.tab === 'status') c.addEventListener('click', e => { const r = e.target.closest('[data-bltgl]'); if (r) navigateTo('blangko', { tab: 'hari', tgl: r.dataset.bltgl }); });
+}
+function blRowPaint(path, c) {
+  const m = path.match(/^km\.n\.(\w+)\./); if (!m) return;
+  const v = S.bl.d.km.n[m[1]] || {}, s = $(`[data-sum="${m[1]}"]`, c), ci = $(`[data-k="km.n.${m[1]}.cat"]`, c);
+  if (s) s.innerHTML = blSum(v);
+  if (ci) ci.classList.toggle('need', blNeed(v));
+}
+function blSet(path, v) {
+  const B = S.bl, sec = path.split('.')[0];
+  blSetPath(B.d, path, v);
+  B.dirty[sec] = (B.dirty[sec] || 0) + 1;
+  AppState.lastAct = Date.now();
+  blLocalPut(); blQueue(1200); blSyncPaint();
+}
+let blTimer = null;
+function blQueue(ms) { clearTimeout(blTimer); blTimer = setTimeout(() => { blFlush().catch(() => { }); }, ms); }
+function blSyncPaint(st) {
+  const el = $('#blSync'); if (!el || !S.bl) return;
+  const B = S.bl, n = Object.keys(B.dirty).length;
+  st = st || (B.saving ? 'busy' : n ? (B.err ? 'err' : 'local') : 'ok');
+  const T = { ok: ['ok', 'bi-cloud-check', 'Tersinkron ke server'], busy: ['info', 'bi-arrow-repeat', 'Menyinkronkan\u2026'], local: ['warn', 'bi-phone', 'Tersimpan di HP \u00B7 menunggu kirim'], err: ['bad', 'bi-wifi-off', 'Tersimpan di HP \u00B7 menunggu sinyal'] };
+  const t = T[st]; el.innerHTML = `<span class="pill pill-${t[0]}"><i class="bi ${t[1]}"></i> ${t[2]}</span>`;
+}
+async function blFlush() {
+  const B = S.bl; if (!B || !B.h) return true;
+  if (B.saving) { B.again = true; return false; }
+  const secs = Object.keys(B.dirty); if (!secs.length) { blSyncPaint(); return true; }
+  const tgl = B.h.ctx.tanggal, vers = {}, sec = {};
+  secs.forEach(k => { vers[k] = B.dirty[k]; sec[k] = clone(B.d[k]); });
+  B.saving = true; blSyncPaint();
+  try {
+    const r = await apiM('blangko.save', { tanggal: tgl, sec: sec, base: B.base }, true, { silent: true });
+    if (S.bl !== B) return true;
+    const rec = r.data.rec;
+    B.h.rec = rec; B.err = '';
+    secs.forEach(k => { if (B.dirty[k] === vers[k]) delete B.dirty[k]; if (rec.data._m && rec.data._m[k]) B.base[k] = rec.data._m[k].t; });
+    blLocalPut();
+    dcPatch('blangko.hari', { tanggal: tgl }, h => { h.rec = rec; });
+    const bar = $('#blBar'), pr = $('#blPr'), stp = $('#blSt');
+    if (bar) bar.style.width = rec.Progres + '%'; if (pr) pr.textContent = rec.Progres + '% terisi'; if (stp) stp.innerHTML = blStPill(rec.Status);
+    if (r.data.ditimpa && r.data.ditimpa.length) toast(r.message, 'info');
+    return !Object.keys(B.dirty).length;
+  } catch (e) {
+    if (S.bl === B) {
+      if (B.err !== e.message) toast('Blangko belum terkirim ke server: ' + e.message + ' Isian tetap tersimpan di HP.', 'err');
+      B.err = e.message; blQueue(20000);
+    }
+    return false;
+  } finally {
+    B.saving = false; blSyncPaint();
+    if (B.again) { B.again = false; blQueue(300); }
+  }
+}
+window.addEventListener('online', () => { if (S.bl && S.bl.h && Object.keys(S.bl.dirty).length) blQueue(500); });
+window.addEventListener('beforeunload', e => { if (S.bl && S.bl.dirty && Object.keys(S.bl.dirty).length && navigator.onLine) blFlush(); });
+function blReload() { navigateTo('blangko', { tab: 'hari', tgl: S.bl.tgl, force: 1 }); }
+function blKosong() {
+  const B = S.bl, c = B.h.ctx, d = B.d, now = new Date(), hm = pad(now.getHours()) + '.' + pad(now.getMinutes()), past = c.tanggal < todayStr(), out = [];
+  BL_SES.forEach(S2 => { if (!past && hm < S2.m) return; const n = c.lok.filter(k => !(d.km.n[k] && d.km.n[k][S2.k])).length; if (n) out.push(n + ' nilai keliling ' + S2.n.toLowerCase()); });
+  const t = c.titik.filter(x => !(d.taman.titik[x.no] && d.taman.titik[x.no].t)).length; if (t) out.push(t + ' titik zona belum dicentang');
+  const a = d.taman.apel.filter(x => !x.h).length; if (a) out.push(a + ' presensi apel pertamanan');
+  if (!d.taman.nilai) out.push('nilai pertamanan hari ini');
+  return out;
+}
+async function blSerah(btn) {
+  const B = S.bl, c = B.h.ctx;
+  await act(btn, async () => {
+    if (Object.keys(B.dirty).length) { const ok = await blFlush(); if (!ok && Object.keys(B.dirty).length) throw new Error('Isian terakhir belum tersinkron ke server. Periksa sinyal lalu coba lagi.'); }
+    const kos = blKosong(), need = c.lok.filter(k => blNeed(B.d.km.n[k])).map(k => B.h.def.lok[k].n);
+    if (need.length) throw new Error('Lengkapi temuan & tindak lanjut untuk lokasi bernilai K: ' + need.join(', ') + '.');
+    openForm({
+      title: 'Serahkan blangko ' + fdA(c.tanggal), submit: 'Serahkan',
+      fields: [{ k: 'info', t: 'html', html: kos.length ? `<div class="bl-warn"><i class="bi bi-exclamation-triangle"></i><div><b>Masih kosong:</b> ${kos.map(E).join(', ')}. Tetap bisa diserahkan.</div></div>` : '<div class="muted">Semua isian sudah lengkap.</div>' }, { k: 'nama', l: 'Nama pengawas piket', req: true, full: true, ml: 80, help: 'Nama dan jam serah tercatat sebagai pengganti tanda tangan.' }],
+      values: { nama: B.h.rec && B.h.rec.PengawasNama ? B.h.rec.PengawasNama : AppState.user.nama },
+      save: async d => { const r = await apiM('blangko.kirim', { tanggal: c.tanggal, nama: d.nama }); toast(r.message, 'ok'); closeModal(); blReload(); }
+    });
+  });
+}
+function blPeriksa(btn, batal) {
+  const t = S.bl.h.ctx.tanggal;
+  if (batal) return act(btn, async () => { if (!(await confirmBox('Buka kembali blangko ini agar pengawas bisa mengoreksi?', 'Ya, buka'))) return; const r = await apiM('blangko.periksa', { tanggal: t, batal: true }); toast(r.message, 'ok'); blReload(); });
+  openForm({ title: 'Tandai blangko diperiksa', submit: 'Tandai diperiksa', fields: [{ k: 'catatan', l: 'Catatan pemeriksa (opsional)', t: 'textarea', full: true, ml: 1000 }], values: { catatan: (S.bl.h.rec && S.bl.h.rec.CatatanPemeriksa) || '' }, save: async d => { const r = await apiM('blangko.periksa', { tanggal: t, catatan: d.catatan }); toast(r.message, 'ok'); closeModal(); blReload(); } });
+}
+async function blBadal(btn) {
+  const t = S.bl.h.ctx.tanggal;
+  if (!(await confirmBox('Catat Anda sebagai <b>badal</b> pengawas piket ' + E(fdA(t)) + '?', 'Ya, saya badal'))) return;
+  await act(btn, async () => { const r = await apiM('blangko.badal', { tanggal: t }); toast(r.message, 'ok'); blReload(); });
+}
+
+function blStatusHtml() {
+  const L = S.bl.list;
+  const rows = L.rows.map(r => `<tr class="bl-row" data-bltgl="${r.tanggal}" tabindex="0"><td><b>${E(r.hari)}</b><span class="sub">${E(fdate(r.tanggal))}${r.tanggal === L.today ? ' \u00B7 hari ini' : ''}</span></td>
+    <td>${r.jumat ? '<span class="muted">Evaluasi / libur</span>' : `${E(r.pj || '\u2013')}${r.badal ? `<span class="sub">Badal: ${E(r.badal)}</span>` : ''}`}</td>
+    <td>${r.jumat ? '' : `${E(r.ctx.zona)} \u00B7 Pekan ${E(r.ctx.pekan)}`}</td>
+    <td>${r.jumat ? '' : blStPill(r.status, r.terlambat)}${r.pengawas && r.pengawas !== r.pj ? `<span class="sub">Diisi ${E(r.pengawas)}</span>` : ''}</td>
+    <td class="n">${r.jumat ? '' : r.progres + '%'}</td><td class="n">${r.rk && r.rk.k ? `<span class="pill pill-bad">${r.rk.k}</span>` : r.jumat ? '' : '0'}</td></tr>`).join('');
+  return `<section class="card-x"><div class="tbl-wrap"><table class="tbl" id="tb_bls"><thead><tr><th>Tanggal</th><th>PJ</th><th>Zona</th><th>Status</th><th class="n">Terisi</th><th class="n">Nilai K</th></tr></thead><tbody>${rows || '<tr><td colspan="6">' + emptyBox('Belum ada blangko') + '</td></tr>'}</tbody></table></div><p class="muted mt1" style="font-size:12px">Ketuk baris untuk membuka blangko tanggal itu. Rentang ${E(fdate(L.from))} \u2013 ${E(fdate(L.to))}.</p></section>`;
+}
+
+function blRekapHtml() {
+  const R0 = S.bl.rek, h3 = R0.hari.map(x => x.slice(0, 3)), sl = ['P', 'Si', 'So'];
+  const cell = x => `<td class="bl-x k-${x === '\u2013' ? 'n' : x || 'e'}">${x || ''}</td>`;
+  const kmRows = R0.km.map(r => `<tr><td class="n">${r.no}</td><td><b>${E(r.n)}</b><span class="sub">${E(r.p)}</span></td>${r.cells.map(c => c.map(cell).join('')).join('')}<td class="n">${r.jk ? `<span class="pill pill-bad">${r.jk}</span>` : '0'}</td><td class="bl-cat2">${E(r.catatan.join('; '))}</td></tr>`).join('');
+  const kel = `<tr class="bl-kelr"><td></td><td><b>Keliling terlaksana</b></td>${R0.keliling.map(d => d.map(x => `<td class="bl-x">${x ? '\u2713' : ''}</td>`).join('')).join('')}<td></td><td></td></tr>`;
+  const v = b => (b ? '\u2713' : '\u2013');
+  const tm = R0.taman.map(x => `<tr><td><b>${E(x.hari)}</b></td><td>${E(x.zona)} ${E(x.zonaNama)}</td><td>${E(x.absen.join(', ') || '\u2013')}</td><td class="tc">${v(x.cek.rute)}</td><td class="tc">${v(x.cek.diZona)}</td><td class="tc">${x.truk ? v(x.cek.truk) : ''}</td><td class="n">${x.tuntas}/${x.total}</td><td>${E(x.belum.join('; ') || '\u2013')}</td><td class="tc">${v(x.cek.alat)}</td><td>${E(x.mesin || '\u2013')}</td><td class="tc">${x.nilai ? `<b class="k-${x.nilai}">${x.nilai}</b>` : '\u2013'}</td></tr>`).join('');
+  const prev = addD(R0.start, -7), next = addD(R0.start, 7);
+  return `<section class="card-x"><div class="row-f between wrap gap2 mb2"><div class="row-f gap1"><button class="btn-x btn-o btn-sm" onclick="navigateTo('blangko',{tab:'rekap',rk:'${prev}'})" aria-label="Pekan sebelumnya"><i class="bi bi-chevron-left"></i></button><b>${E(R0.label)}</b><button class="btn-x btn-o btn-sm" onclick="navigateTo('blangko',{tab:'rekap',rk:'${next}'})" aria-label="Pekan berikutnya"${next > todayStr() ? ' disabled' : ''}><i class="bi bi-chevron-right"></i></button></div><button class="btn-x btn-g btn-sm" onclick="blExport(this)"><i class="bi bi-file-earmark-text"></i> Ekspor Docs/PDF</button></div>
+    <div class="bl-stl">${R0.status.map(s => `<button type="button" class="bl-sti" onclick="navigateTo('blangko',{tab:'hari',tgl:'${s.tanggal}'})"><b>${E(s.hari)}</b><small>${E(s.pengawas || s.pj || '\u2013')}</small>${blStPill(s.status, s.terlambat)}${s.jam ? `<small>Diserahkan ${E(s.jam)}</small>` : ''}</button>`).join('')}</div>
+    <h3 class="bl-sub mt2">Kamar mandi \u00B7 nilai per keliling</h3>
+    <div class="tbl-wrap"><table class="tbl nostk bl-mx"><thead><tr><th rowspan="2" class="n">No</th><th rowspan="2">Lokasi</th>${h3.map(x => `<th colspan="3" class="tc">${E(x)}</th>`).join('')}<th rowspan="2" class="n">K</th><th rowspan="2">Temuan &amp; tindak lanjut</th></tr><tr>${h3.map(() => sl.map(x => `<th class="tc">${x}</th>`).join('')).join('')}</tr></thead><tbody>${kmRows}${kel}</tbody></table></div>
+    <p class="muted" style="font-size:12px">P = pagi 08.15 \u00B7 Si = siang 13.00 \u00B7 So = sore 15.15 \u00B7 kosong = belum dinilai \u00B7 \u2013 = bukan jadwal lokasi itu.</p>
+    <div class="bl-pemb">${R0.pembinaan.length ? `<i class="bi bi-exclamation-octagon-fill"></i><div><b>Perlu pembinaan</b> (nilai K 3\u00D7 atau lebih dalam sepekan): ${R0.pembinaan.map(x => E(x.nama) + ' (' + x.k + '\u00D7)').join(', ')}</div>` : '<i class="bi bi-check-circle-fill"></i><div>Tidak ada pekerja dengan nilai K 3\u00D7 atau lebih pekan ini.</div>'}</div>
+    <p class="muted" style="font-size:12.5px">Jumlah nilai K per pekerja: ${R0.kPekerja.map(x => E(x.nama) + ' ' + x.k).join(' \u00B7 ')}</p>
+    <h3 class="bl-sub mt2">Pertamanan</h3>
+    <div class="tbl-wrap"><table class="tbl"><thead><tr><th>Hari</th><th>Zona</th><th>Tidak hadir apel</th><th>Rute inti</th><th>Di zona</th><th>Truk</th><th class="n">Titik tuntas</th><th>Belum / susulan</th><th>Alat</th><th>Mesin</th><th>Nilai</th></tr></thead><tbody>${tm}</tbody></table></div>
+    ${R0.catatan.length ? `<h3 class="bl-sub mt2">Catatan harian</h3><div class="tbl-wrap"><table class="tbl"><thead><tr><th>Hari</th><th>Kerusakan / kebutuhan material</th><th>Pekerja izin / tidak di lokasi / titik susulan</th></tr></thead><tbody>${R0.catatan.map(x => `<tr><td><b>${E(x.hari)}</b></td><td>${E(x.kerusakan || '\u2013')}</td><td>${E(x.izin || '\u2013')}</td></tr>`).join('')}</tbody></table></div>` : ''}
+  </section>`;
+}
+function blExport(btn) { return act(btn, async () => { toast('Membuat rekap di Google Drive\u2026'); const r = await apiM('blangko.exportRekap', { start: S.bl.rek.start }, false, { timeout: 280000 }); showExport(r.data, 'Buka Google Docs'); }); }
+
+function blJadwalHtml() {
+  const P = S.bl.pj, staff = isStaff();
+  const rows = P.rows.map(r => `<tr data-q="${E(rowText(r))}"><td><b>${E(r.hari)}</b><span class="sub">${E(fdate(r.Tanggal))}</span></td><td>${r.Jenis === 'Piket' ? `${E(r.zona)} \u00B7 Pekan ${E(r.pekan)}` : '<span class="muted">\u2013</span>'}</td><td>${r.Jenis === 'Piket' ? `<b>${E(r.PJNama)}</b>${r.PJUser ? '' : ' <span class="pill pill-warn" title="Belum terhubung ke akun SIMOP">tanpa akun</span>'}` : `<span class="pill pill-muted">${E(r.Jenis)}</span> ${E(r.PJNama)}`}</td><td>${E(r.BadalNama || '\u2013')}</td><td>${E(r.Catatan || '')}</td>${staff ? `<td><div class="actions"><button class="btn-x btn-o btn-sm" onclick="pjForm('${r.ID}')" aria-label="Ubah jadwal"><i class="bi bi-pencil"></i></button><button class="btn-x btn-d btn-sm" onclick="pjDel('${r.ID}')" aria-label="Hapus jadwal"><i class="bi bi-trash"></i></button></div></td>` : ''}</tr>`).join('');
+  return `<section class="card-x"><div class="tools"><span class="muted" style="font-size:13px">${E(fdate(P.from))} \u2013 ${E(fdate(P.to))} \u00B7 satu penanggung jawab per tanggal</span><span class="grow"></span>${staff ? '<button class="btn-x btn-p btn-sm" onclick="pjForm()"><i class="bi bi-plus-lg"></i> Tambah jadwal</button>' : ''}</div>
+    ${P.rows.length ? `<div class="tbl-wrap"><table class="tbl" id="tb_pj"><thead><tr><th>Tanggal</th><th>Zona</th><th>Penanggung jawab</th><th>Badal</th><th>Catatan</th>${staff ? '<th></th>' : ''}</tr></thead><tbody>${rows}</tbody></table></div>` : emptyBox('Belum ada jadwal PJ', staff ? 'Tambahkan jadwal penanggung jawab per tanggal.' : 'Jadwal diatur oleh admin.')}</section>`;
+}
+function pjForm(id) {
+  const P = S.bl.pj, rec = id ? P.rows.find(x => x.ID === id) : null;
+  const akun = [{ v: '', l: '\u2014 tanpa akun / isi nama \u2014' }].concat(P.akun.map(a => ({ v: a.user, l: a.nama + ' (@' + a.user + ')' })));
+  openForm({
+    title: rec ? 'Ubah jadwal ' + fdA(rec.Tanggal) : 'Tambah jadwal PJ', submit: 'Simpan',
+    fields: [{ k: 'Tanggal', l: 'Tanggal', t: 'date', req: true }, { k: 'Jenis', l: 'Jenis', t: 'select', opts: ['Piket', 'Evaluasi', 'Libur'] }, { k: 'PJUser', l: 'Akun penanggung jawab', t: 'select', opts: akun, full: true }, { k: 'PJNama', l: 'Nama PJ (bila tanpa akun)', full: true, ml: 80 }, { k: 'BadalUser', l: 'Badal (opsional)', t: 'select', opts: akun, full: true }, { k: 'Catatan', l: 'Catatan', full: true, ml: 200 }],
+    values: rec || { Tanggal: todayStr(), Jenis: 'Piket' },
+    save: async d => { if (rec) d.ID = rec.ID; const r = await apiM('pj.save', d); toast(r.message, 'ok'); closeModal(); navigateTo('blangko', { tab: 'jadwal' }); }
+  });
+}
+async function pjDel(id) {
+  if (!(await confirmBox('Hapus jadwal PJ tanggal ini?', 'Ya, hapus'))) return;
+  await act(null, async () => { const r = await apiM('pj.delete', { id: id }); toast(r.message, 'ok'); navigateTo('blangko', { tab: 'jadwal' }); });
+}
+
+function blPrint() {
+  const B = S.bl, h = B.h, c = h.ctx, d = B.d, rec = h.rec || {}, def = h.def, serah = rec.data && rec.data.serah;
+  const ring = (val, opts) => opts.map(o => `<span class="${val === o ? 'on' : ''}">${o}</span>`).join(' ');
+  const box = (on, t) => `<span class="box">${on ? '\u2713' : ''}</span>${t}`;
+  let no = 0;
+  const km = c.lok.map(k => { const L = def.lok[k], v = d.km.n[k] || {}; no++; return (k === 'vvip' ? '<tr class="grp"><td colspan="7">Kerja bakti Kamis 08.30\u201309.30 (dipantau saat keliling pagi)</td></tr>' : '') + `<tr><td class="n">${no}</td><td><b>${E(L.n)}</b></td><td class="p">${E(L.p)}</td>${BL_SES.map(S2 => `<td class="c">${ring(v[S2.k], ['B', 'C', 'K'])}</td>`).join('')}<td class="p">${E(v.cat || '')}</td></tr>`; }).join('');
+  const T = d.taman, kh = T.khusus || {};
+  const apel = def.tamanPekerja.map((n, i) => { const a = T.apel[i] || {}; return `<tr><td>${E(n)}</td><td class="c">${ring(a.h === 'Y' ? '\u2713' : a.h === 'T' ? '\u2717' : '', ['\u2713', '\u2717'])}</td><td>${E(a.j || '')}</td><td class="p">${E(a.k || '')}</td></tr>`; }).join('');
+  const titik = c.titik.map(x => { const v = T.titik[x.no] || {}; return `<tr><td class="n">${x.no}</td><td>${E(x.n)}</td><td class="c">${ring(v.t === 'Y' ? 'Ya' : v.t === 'B' ? 'Blm' : '', ['Ya', 'Blm'])}</td><td class="p">${E(v.c || '')}</td></tr>`; }).join('') + `<tr><td class="n">${c.titik.length + 1}</td><td class="p">Tugas khusus: ${E(kh.tugas || '\u2026\u2026\u2026\u2026')}</td><td class="c">${ring(kh.t === 'Y' ? 'Ya' : kh.t === 'B' ? 'Blm' : '', ['Ya', 'Blm'])}</td><td class="p">${E(kh.c || '')}</td></tr>`;
+  const css = '@page{size:330mm 215mm;margin:8mm 10mm}*{box-sizing:border-box;margin:0;padding:0}body{font-family:"Segoe UI",Arial,sans-serif;color:#1b1f1c;font-size:9pt}.top{display:flex;justify-content:space-between;align-items:flex-end;border-bottom:2px solid #1f6f43;padding-bottom:3px}.top .k{font-size:7.2pt;font-weight:600;color:#555}.top h1{font-size:14pt;color:#1f6f43}.hari{background:#1f6f43;color:#fff;font-weight:800;font-size:15pt;padding:2px 14px;border-radius:5px}.isi{display:flex;gap:14px;margin:5px 0 4px;font-size:9.5pt}.isi span{border-bottom:1px dotted #777;padding:0 6px 1px;flex:1}.isi b{white-space:nowrap}.main{display:grid;grid-template-columns:57fr 43fr;gap:10px}h2{font-size:10pt;color:#fff;padding:2px 7px;border-radius:4px 4px 0 0;display:flex;justify-content:space-between}h2 small{font-weight:400;font-size:8pt}.km h2{background:#1d5fa8}.pt h2{background:#2f7d32}table{width:100%;border-collapse:collapse}th,td{border:1px solid #8f9a93;padding:0 4px;height:7mm;vertical-align:middle}th{background:#eef1ef;font-size:7.6pt;height:auto;padding:2px 3px}td.c{text-align:center;white-space:nowrap;color:#9aa39d}td.c span{display:inline-block;min-width:4.4mm;margin:0 1px}td.c span.on,.ring span.on{color:#000;font-weight:800;border:1.4px solid #000;border-radius:50%}td.n{text-align:center;width:6mm;color:#555}td.p{font-size:7.8pt;color:#333}tr.grp td{background:#f4f6f5;font-size:7.6pt;font-weight:700;color:#555;height:4.6mm}.cek{display:flex;flex-wrap:wrap;gap:3px 14px;font-size:8.4pt;margin:4px 0 2px}.box{display:inline-block;width:3.4mm;height:3.4mm;border:1px solid #555;margin:0 3px 0 6px;text-align:center;line-height:3mm;font-size:7pt;font-weight:800}.ring span{padding:0 2px;margin:0 2px}.ket{font-size:7.4pt;color:#444;margin-top:3px}.sub{font-size:8.4pt;font-weight:700;color:#2f7d32;margin:5px 0 2px}.bawah{display:grid;grid-template-columns:1.5fr 1fr .7fr .7fr;gap:8px;margin-top:6px;min-height:21mm}.bawah div{border:1px solid #8f9a93;border-radius:4px;padding:2px 6px;font-size:8pt}.bawah b{display:block;color:#444}.ttd{text-align:center}';
+  const html = `<!doctype html><html lang="id"><head><meta charset="utf-8"><title>Blangko ${E(c.tanggal)}</title><style>${css}</style></head><body>
+  <div class="top"><div><div class="k">BAGIAN PEMBANGUNAN \u2014 PONDOK MODERN DARUSSALAM GONTOR KAMPUS 3 \u201CDARUL MA\u2019RIFAT\u201D</div><h1>BLANGKO HARIAN PENGAWAS PIKET \u00B7 KAMAR MANDI &amp; PERTAMANAN</h1></div><div class="hari">${E(c.hari.toUpperCase())}</div></div>
+  <div class="isi"><b>Tanggal:</b><span>${E(fdate(c.tanggal))}</span><b>Pengawas:</b><span style="flex:2">${E(rec.PengawasNama || '')}</span><b class="ring">Pekan: ${ring(c.pekan, ['A', 'B'])}</b><b>Diserahkan jam:</b><span>${E(serah ? serah.jam : '')}</span></div>
+  <div class="main"><div class="km"><h2>A. KAMAR MANDI <small>3\u00D7 keliling: pagi 08.15 \u00B7 siang 13.00 \u00B7 sore 15.15</small></h2>
+  <table><thead><tr><th rowspan="2">No</th><th rowspan="2" style="width:20%">Lokasi (urut rute)</th><th rowspan="2" style="width:16%">Pekerja</th><th colspan="3">NILAI</th><th rowspan="2" style="width:30%">Temuan &amp; tindak lanjut</th></tr><tr><th>Pagi</th><th>Siang</th><th>Sore</th></tr></thead><tbody>${km}</tbody></table>
+  <div class="cek"><span>${box(d.km.siang, 'Siang: ' + E(c.kmSiang))}</span><span>${box(d.km.sore, 'Sore: keran &amp; pompa mati')}</span></div><div class="ket">${E(def.ket.km)}</div></div>
+  <div class="pt"><h2>B. PERTAMANAN <small>${E(c.zona)} \u00B7 ${E(c.zonaNama)}</small></h2>
+  <table><thead><tr><th style="width:30%">Pekerja (apel 07.00)</th><th>Hadir</th><th>Jam datang</th><th style="width:38%">Keterangan</th></tr></thead><tbody>${apel}</tbody></table>
+  <div class="cek"><span>${box(T.rute, 'Pagi: Rute Harian Inti bersih')}</span><span>${box(T.diZona, 'Siang: pekerja di zona hari ini')}</span>${c.truk ? `<span>${box(T.truk, 'Truk sampah jalan')}</span>` : ''}</div>
+  <div class="sub">Titik zona hari ini (dicentang saat keliling sore)</div>
+  <table><thead><tr><th>No</th><th style="width:50%">Titik</th><th style="width:17%">Tuntas</th><th style="width:27%">Catatan</th></tr></thead><tbody>${titik}</tbody></table>
+  <div class="cek"><span>${box(T.alat, 'Alat dicuci &amp; disimpan')}</span><span class="ring">Mesin rumput: ${ring(T.mesin, ['Baik', 'Servis'])}</span><span class="ring">Nilai hari ini: ${ring(T.nilai, ['B', 'C', 'K'])}</span></div>
+  <div class="ket">${E(def.ket.A)} ${E(def.ket.B)}</div></div></div>
+  <div class="bawah"><div><b>Kerusakan / kebutuhan material esok hari:</b>${E(d.bawah.kerusakan || '')}</div><div><b>Pekerja izin / tidak di lokasi / titik susulan:</b>${E(d.bawah.izin || '')}</div><div class="ttd"><b>Pengawas Piket</b><br>${serah ? E(serah.nama) + '<br><small>diserahkan ' + E(serah.jam) + '</small>' : '<br>( \u2026\u2026\u2026\u2026 )'}</div><div class="ttd"><b>Diperiksa Pelaksana Pembangunan</b><br>${rec.Status === 'Diperiksa' ? E(rec.DiperiksaOleh) : '<br>( \u2026\u2026\u2026\u2026 )'}</div></div>
+  <script>setTimeout(function(){window.print()},300)<\/script></body></html>`;
+  const w = window.open('', '_blank');
+  if (!w) { toast('Jendela cetak diblokir browser. Izinkan pop-up untuk SIMOP.', 'err'); return; }
+  w.document.open(); w.document.write(html); w.document.close();
+}
+
+function blWidget(b) {
+  if (!b) return emptyMini('Data blangko belum tersedia.');
+  if (b.jumat) return emptyMini("Jum'at \u00B7 evaluasi mingguan, pekerja libur.");
+  const rk = b.rk || { km: {}, k: 0, tt: [0, b.nTitik || 0], nt: '' }, km = rk.km || {};
+  const pj = b.pj ? (b.pj.badal ? b.pj.badal + ' (badal)' : b.pj.nama) : '';
+  return `<div class="bl-w"><div class="row-f between gap1 wrap"><div><div class="wg-sub">PJ hari ini</div><b>${E(pj || 'Belum ada jadwal')}</b></div>${blStPill(b.status, b.terlambat)}</div>
+    <div class="progress-x mt1" aria-hidden="true"><i style="width:${b.progres}%"></i></div><small class="muted">${b.progres}% terisi${b.pengawas ? ' \u00B7 ' + E(b.pengawas) : ''}</small>
+    <div class="bl-wk">${BL_SES.map(S2 => { const x = km[S2.k] || [0, b.nLok || 0]; return `<span class="${x[1] && x[0] >= x[1] ? 'ok' : ''}"><small>${S2.n}</small><b>${x[0]}/${x[1]}</b></span>`; }).join('')}</div>
+    <div class="wg-sub">KM nilai K: <b class="${rk.k ? 'k-K' : ''}">${rk.k || 0}</b> \u00B7 Titik tuntas ${rk.tt[0]}/${rk.tt[1]}${rk.nt ? ' \u00B7 Nilai taman ' + E(rk.nt) : ''}</div>
+    <div class="wg-sub">${E(b.zona)} ${E(b.zonaNama)} \u00B7 Pekan ${E(b.pekan)}${b.truk ? ' \u00B7 hari truk' : ''}</div></div>`;
+}
+function dashPengawas(d) {
+  const b = d.blangko, nama = String(AppState.user.nama || '');
+  const jd = (d.pjSaya || []).map(x => `<div class="mini-i"><span class="av">${E(x.hari.slice(0, 3))}</span><span class="tx"><b>${E(fdA(x.Tanggal))}</b><small class="muted d-block">${E(x.ctx.zona)} ${E(x.ctx.zonaNama)} \u00B7 Pekan ${E(x.ctx.pekan)}${x.badal ? ' \u00B7 sebagai badal' : ''}</small></span></div>`).join('');
+  return `<div class="dh fade-in"><div><h1>Ahlan wa Sahlan, <span>${E(nama)}</span></h1><p>${fdA(d.tanggal)} \u00B7 Pengawas piket Kamar Mandi &amp; Pertamanan</p></div><div class="dh-acts"><button class="btn-x btn-p" onclick="navigateTo('blangko',{tab:'hari',tgl:'${d.tanggal}'})"><i class="bi bi-pencil-square"></i> Isi blangko hari ini</button></div></div>
+  <div class="two"><section class="card-x"><div class="card-h"><div><h3 style="font-size:16px">Blangko hari ini</h3><p>${E(b.hari)} \u00B7 keliling 08.15 \u00B7 13.00 \u00B7 15.15 \u00B7 serah 16.00</p></div></div>${blWidget(b)}</section>
+  <section class="card-x"><div class="card-h"><div><h3 style="font-size:16px">Jadwal piket saya</h3><p>3 pekan ke depan</p></div></div><div class="mini-l">${jd || emptyMini('Belum ada jadwal atas nama Anda. Lihat menu Blangko \u2192 Jadwal PJ.')}</div></section></div>`;
 }
 
 document.addEventListener('keydown', e => {
