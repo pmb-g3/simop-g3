@@ -44,7 +44,7 @@ function toast(msg, type) {
   $('#toasts').appendChild(el);
   setTimeout(() => el.remove(), type === 'err' ? 6500 : 3600);
 }
-const READ_ACT = new Set(['dash.get', 'karyawan.list', 'absensi.get', 'rekap.absensi', 'rekap.bayar', 'rekap.list', 'izin.list', 'sub.list', 'program.list', 'katalog.list', 'material.list', 'piket.list', 'piket.staff', 'keu.list', 'armada.list', 'admin.users', 'admin.audit', 'admin.config', 'pilihan.list', 'minggu.info', 'mat.rekap', 'wa.config', 'blangko.hari', 'blangko.list', 'blangko.rekap', 'pj.list']);
+const READ_ACT = new Set(['dash.get', 'karyawan.list', 'absensi.get', 'rekap.absensi', 'rekap.bayar', 'rekap.list', 'izin.list', 'sub.list', 'program.list', 'katalog.list', 'material.list', 'piket.list', 'piket.staff', 'keu.list', 'armada.list', 'admin.users', 'admin.audit', 'admin.config', 'pilihan.list', 'minggu.info', 'mat.rekap', 'wa.config', 'blangko.hari', 'blangko.list', 'blangko.rekap', 'pj.list', 'dash.pengawas', 'blangko.ringkas']);
 const DC = { mem: {}, mode: 'net', changed: false, bg: false, user: '', ver: '', pv: {}, want: null, fresh: null };
 const NOWRITE = new Set(['file.get', 'file.thumbs', 'import.check', 'batch.read', 'sync.ver', 'program.laporan', 'wa.preview', 'wa.groups']);
 const DC_MISS = new Error('cache-miss');
@@ -79,7 +79,13 @@ function dcClear() {
 function dcPatch(action, payload, fn) { const h = DC.mem[dcKey(action, payload)]; if (h) { try { fn(h.d); dcSave(); } catch (e) { } } }
 function dcPeek(action, payload) { const h = DC.mem[dcKey(action, payload)]; return h ? clone(h.d) : null; }
 async function serverVer() {
-  try { const r = await apiM('sync.ver', {}, true, { silent: true }); DC.ver = r.data.ver; return r.data.ver; } catch (e) { return null; }
+  try {
+    const q = [gasPost('api', [AppState.token, 'sync.ver', {}], { prio: 1, idem: true, track: false })];
+    if (SB.cfg && SB.cfg.modul && SB.cfg.modul.length) q.push(sbCall('sync.ver', {}, { track: false }));
+    const r = await Promise.all(q);
+    if (r.some(x => !x || !x.success)) { const au = r.find(x => x && x.code === 'AUTH'); if (au) forceLogout(au.message); return null; }
+    DC.ver = r.map(x => x.data.ver).join('|'); return DC.ver;
+  } catch (e) { return null; }
 }
 function dcFresh(action, payload, onChange) {
   const h = DC.mem[dcKey(action, payload)], old = h ? JSON.stringify(h.d) : null;
@@ -103,7 +109,10 @@ function apiM(action, payload, quiet, o) {
   if (optRow) AppState.optRow = null;
   if (optRow) optRow.classList.add('opt-out');
   const isFile = action === 'file.get' || action === 'file.thumbs';
-  return gasPost('api', [AppState.token, action, payload || {}], { prio: DC.bg ? 2 : (isFile || (o && o.silent)) ? 1 : 0, idem: rd || isFile || (NOWRITE.has(action) && action !== 'wa.groups'), track: !isFile && !(o && o.silent), bg: DC.bg, timeout: o && o.timeout }).then(res => {
+  const kirim = sbRute(action)
+    ? sbCall(action, payload || {}, { idem: rd || NOWRITE.has(action), ulang: action === 'blangko.save', track: !(o && o.silent), bg: DC.bg, timeout: o && o.timeout })
+    : gasPost('api', [AppState.token, action, payload || {}], { prio: DC.bg ? 2 : (isFile || (o && o.silent)) ? 1 : 0, idem: rd || isFile || (NOWRITE.has(action) && action !== 'wa.groups'), track: !isFile && !(o && o.silent), bg: DC.bg, timeout: o && o.timeout });
+  return kirim.then(res => {
     if (!q) loader(-1);
     if (res && res.success) {
       if (rd) {
@@ -120,6 +129,7 @@ function apiM(action, payload, quiet, o) {
   }, err => { if (!q) loader(-1); if (optRow) optRow.classList.remove('opt-out'); throw err; });
 }
 const api = (a, p, q) => apiM(a, p, q).then(r => r.data);
+const sbRute = a => a === 'dash.pengawas' || a === 'blangko.ringkas' || (/^(blangko|pj)\./.test(a) && a !== 'blangko.exportRekap' && sbAktif('blangko'));
 async function act(btn, fn) {
   if (btn) { if (btn.classList.contains('busy')) return; btn.classList.add('busy'); }
   try { return await fn(); } catch (e) { toast(e.message || String(e), 'err'); } finally { if (btn) btn.classList.remove('busy'); }
@@ -624,11 +634,19 @@ async function prefetchMenus() {
       const part = want.slice(i, i + 40);
       DC.bg = true;
       let res = null;
-      try { res = await apiM('batch.read', { calls: part.map(x => ({ a: x[1].a, p: x[1].p })) }, true); } catch (e) { res = null; } finally { DC.bg = false; }
-      if (!res) continue;
-      const ver = res.data.ver, now = Date.now();
+      const sbPart = part.filter(x => sbRute(x[1].a)), gPart = part.filter(x => !sbRute(x[1].a)), hasil = new Map();
+      let ver = '';
+      try {
+        const tunggu = [];
+        if (gPart.length) tunggu.push(apiM('batch.read', { calls: gPart.map(x => ({ a: x[1].a, p: x[1].p })) }, true).then(r => { gPart.forEach((x, j) => hasil.set(x[0], r.data.results[j])); return r.data.ver; }));
+        if (sbPart.length) tunggu.push(sbCall('batch.read', { calls: sbPart.map(x => ({ a: x[1].a, p: x[1].p })) }, { track: false, bg: true }).then(r => { if (r && r.success) sbPart.forEach((x, j) => hasil.set(x[0], r.data.results[j])); return ''; }));
+        ver = (await Promise.all(tunggu))[0] || '';
+      } catch (e) { } finally { DC.bg = false; }
+      if (!hasil.size) continue;
+      const now = Date.now();
+      if (SB.cfg && SB.cfg.modul && SB.cfg.modul.length) ver = '';
       part.forEach((x, j) => {
-        const o = res.data.results[j];
+        const o = hasil.get(x[0]);
         if (o && o.ok) { DC.mem[x[0]] = { t: now, d: o.data === undefined ? null : o.data }; DC.fresh.add(x[0]); }
       });
       if (ver) { ids.forEach(id => { if (!(id in firstVer)) firstVer[id] = ver; }); }
@@ -683,7 +701,7 @@ function bootHtml() {
   const arcs = [1, 2, 3, 4, 5, 6].map(i => `<span class="arc a${i}"></span>`).join('');
   return `<div class="boot" role="status" aria-live="polite" aria-label="Memuat aplikasi"><div class="boot-stage">${arcs}<div class="boot-logo">${logoImg()}</div></div></div>`;
 }
-const NEED_BUILD = 20261121;
+const NEED_BUILD = 20261122;
 function buildCheck(cfg) {
   const b = Number(cfg && cfg.build || 0), old = $('#buildWarn');
   if (b >= NEED_BUILD) { if (old) old.remove(); return; }
@@ -694,6 +712,7 @@ function buildCheck(cfg) {
 }
 function applySession(d) {
   AppState.token = d.token; AppState.user = d.user; AppState.menu = d.menu; AppState.config = d.config;
+  sbSetConfig(d.config && d.config.sb);
   saveSessInfo(d); dcLoad(); buildCheck(d.config);
   if (d.boot) { Object.keys(d.boot).forEach(k => { DC.mem[k] = { t: Date.now(), d: d.boot[k] }; }); dcSave(); }
   document.body.classList.remove('auth-mode'); renderShell();
@@ -715,12 +734,19 @@ function doLoginUI(btn) {
       if (!res || !res.success) { err.className = 'err-box'; err.textContent = (res && res.message) || 'Login gagal.'; $('#lgPass').value = ''; $('#lgPass').focus(); return; }
       saveToken(res.data.token, rem);
       if (rem) storeBrowserPassword(u, p);
-      applySession(res.data);
+      const lanjut = () => applySession(res.data);
+      const sb = res.data.sb;
+      if (sb && sb.email) {
+        sbSetConfig(res.data.config && res.data.config.sb);
+        if (sb.gagal) SB.gagal = sb.gagal;
+        loader(1); btn.classList.add('busy');
+        sbMasuk(sb.email, p).catch(() => { }).finally(() => { loader(-1); btn.classList.remove('busy'); lanjut(); });
+      } else lanjut();
     }, e => { loader(-1); btn.classList.remove('busy'); err.className = 'err-box'; err.textContent = e.message || 'Koneksi gagal. Periksa jaringan lalu coba lagi.'; });
 }
 function resetState() {
   UPQ.jobs = []; upPaint(); AppState.full = {}; viewerClose(); tabMenuClose();
-  clearToken(); dcClear(); DC.user = ''; [localStorage, sessionStorage].forEach(st => { try { st.removeItem('simop-ss'); } catch (e) { } }); AppState.token = null; AppState.user = null; AppState.menu = []; AppState.img = {}; Object.keys(S).forEach(k => delete S[k]); }
+  clearToken(); dcClear(); sbKeluar(); DC.user = ''; [localStorage, sessionStorage].forEach(st => { try { st.removeItem('simop-ss'); } catch (e) { } }); AppState.token = null; AppState.user = null; AppState.menu = []; AppState.img = {}; Object.keys(S).forEach(k => delete S[k]); }
 function forceLogout(msg) { if (!AppState.token) return; resetState(); showLogin(msg || 'Sesi berakhir. Silakan masuk kembali.'); }
 function logout() {
   const t = AppState.token; resetState(); showLogin();
@@ -799,7 +825,8 @@ const greet = () => { const h = new Date().getHours(); return h < 11 ? 'Pagi' : 
 const hk = x => String(x).replace('.', ',');
 
 PAGES.dashboard = async function () {
-  const d = await api('dash.get');
+  const d = role() === 'pengawas' && sbAktif('blangko') ? await api('dash.pengawas') : await api('dash.get');
+  if (sbAktif('blangko') && d.role !== 'toko' && d.role !== 'pengawas') { try { d.blangko = await api('blangko.ringkas'); } catch (e) { if (e === DC_MISS) throw e; d.blangko = null; } }
   S.dash = { d: d };
   if (d.role === 'toko') return dashToko(d);
   if (d.role === 'pengawas') return { html: dashPengawas(d), init: () => { } };
@@ -2249,13 +2276,47 @@ PAGES.akun = async function (o) {
     ], a);
   } else {
     const c = await api('admin.config');
+    let sbc = null; try { sbc = (await apiM('sb.config', {}, true)).data; } catch (e) { sbc = null; }
     const F = [{ k: 'appName', l: 'Nama aplikasi', req: true, full: true, ml: 60 }, { k: 'logoUrl', l: 'URL logo (https, opsional)', full: true, ph: 'Alamat https gambar logo' }, { k: 'emailToko', l: 'Email Toko KUK (notifikasi order masuk)', t: 'email', full: true, help: 'Beberapa email dipisah koma.' }, { k: 'emailAdmin', l: 'Email admin (notifikasi barang tiba)', t: 'text', full: true, help: 'Beberapa email dipisah koma.' }];
     S.cfgF = F;
     body = `<form id="cfgForm" class="form-grid" novalidate onsubmit="return false" style="max-width:640px">${F.map(f => fieldHtml(f, c[f.k])).join('')}<div class="full"><button class="btn-x btn-p" onclick="act(this,saveCfg)"><i class="bi bi-save"></i> Simpan pengaturan</button></div></form>
-    <hr style="border-color:var(--border);margin:1.5rem 0"><h3 style="font-size:15px;margin-bottom:.75rem">Penyimpanan</h3><dl class="kv"><dt>ID folder Drive</dt><dd class="trunc" style="font-family:monospace">${E(c.folderId)}</dd><dt>ID Spreadsheet</dt><dd class="trunc" style="font-family:monospace">${E(c.spreadsheetId)}</dd></dl>`;
+    <hr style="border-color:var(--border);margin:1.5rem 0"><h3 style="font-size:15px;margin-bottom:.75rem">Penyimpanan</h3><dl class="kv"><dt>ID folder Drive</dt><dd class="trunc" style="font-family:monospace">${E(c.folderId)}</dd><dt>ID Spreadsheet</dt><dd class="trunc" style="font-family:monospace">${E(c.spreadsheetId)}</dd></dl>` + sbSetHtml(sbc);
   }
   return `<div class="page-head"><div><h1>Kelola akun &amp; audit</h1><p>Atur pengguna, tinjau jejak aktivitas, dan sesuaikan pengaturan aplikasi.</p></div></div><section class="card-x">${tabs}${body}</section>`;
 };
+function sbSetHtml(c) {
+  if (!c) return '';
+  const modul = c.pilihan.map(m => `<div class="li"><div class="grow"><b>${E(m.label)}</b><span class="sub">${m.aktif ? 'Memakai Supabase (cepat)' : 'Masih memakai Apps Script & Google Sheets'}</span></div>${m.aktif ? `<span class="pill pill-ok">Supabase</span><button class="btn-x btn-o btn-sm" onclick="sbKembaliUI('${m.id}', this)"><i class="bi bi-arrow-counterclockwise"></i> Kembalikan</button>` : `<button class="btn-x btn-p btn-sm" onclick="sbPindahUI('${m.id}', this)"${c.siap ? '' : ' disabled'}><i class="bi bi-rocket-takeoff"></i> Pindahkan</button>`}</div>`).join('');
+  return `<hr style="border-color:var(--border);margin:1.5rem 0"><h3 style="font-size:15px;margin-bottom:.25rem">Server data cepat (Supabase)</h3><p class="muted" style="font-size:13px;max-width:62ch">Modul yang dipindah ke Supabase terbuka \u00B110\u00D7 lebih cepat. Kunci rahasia hanya disimpan di Apps Script dan setelah disimpan hanya tampil tersamar.</p>
+    <form id="sbForm" class="form-grid" novalidate onsubmit="return false" style="max-width:640px">
+      <div class="full"><label class="lbl" for="sbUrl">Alamat proyek (Project URL)</label><input class="inp" id="sbUrl" value="${E(c.url)}" placeholder="https://xxxx.supabase.co" autocomplete="off"></div>
+      <div class="full"><label class="lbl" for="sbPub">Kunci publik (Publishable key)</label><input class="inp" id="sbPub" value="${E(c.pub)}" placeholder="sb_publishable_\u2026" autocomplete="off"></div>
+      <div class="full"><label class="lbl" for="sbSec">Kunci rahasia (Secret key)</label><input class="inp" id="sbSec" type="password" autocomplete="new-password" placeholder="${c.secret ? E(c.secret) + ' (kosongkan bila tidak diganti)' : 'sb_secret_\u2026'}"><div class="help">Supabase \u2192 Project Settings \u2192 API Keys \u2192 Secret key.</div></div>
+      <div class="full row-f gap2 wrap"><button class="btn-x btn-p" onclick="sbSimpanUI(this)"><i class="bi bi-save"></i> Simpan & uji koneksi</button>${c.siap ? '<button class="btn-x btn-o" onclick="sbStatusUI(this)"><i class="bi bi-activity"></i> Cek status</button>' : ''}</div>
+    </form><div id="sbStat" class="mt2"></div>
+    <h3 style="font-size:14px;margin:1rem 0 .5rem">Modul</h3><div class="stack" style="max-width:640px">${modul}</div>`;
+}
+async function sbSimpanUI(btn) {
+  await act(btn, async () => {
+    const r = await apiM('sb.configSave', { url: $('#sbUrl').value.trim(), pub: $('#sbPub').value.trim(), secret: $('#sbSec').value.trim() });
+    toast(r.message, 'ok'); navigateTo('akun', { tab: 'set', force: 1 });
+  });
+}
+async function sbStatusUI(btn) {
+  await act(btn, async () => {
+    const d = (await apiM('sb.status', {})).data, t = Object.keys(d.sheets);
+    $('#sbStat').innerHTML = `<div class="card-x" style="padding:1rem;max-width:640px"><div class="row-f between wrap gap2"><b><i class="bi bi-check-circle-fill" style="color:var(--em-a)"></i> Terhubung</b><span class="muted">waktu jawab ${d.ms} ms \u00B7 ${E(d.waktu)} WIB</span></div><table class="tbl nostk mt1"><thead><tr><th>Tabel</th><th class="n">Google Sheets</th><th class="n">Supabase</th></tr></thead><tbody>${t.map(k => `<tr><td>${E(k)}</td><td class="n">${d.sheets[k]}</td><td class="n">${d.supabase[k] == null ? '\u2013' : d.supabase[k]}</td></tr>`).join('')}</tbody></table></div>`;
+  });
+}
+function sbMasukUlang_(msg) { const t = AppState.token; resetState(); showLogin(msg); gasPost('doLogout', [t]).catch(() => { }); }
+async function sbPindahUI(modul, btn) {
+  if (!(await confirmBox('<b>Pindahkan modul ini ke Supabase?</b><br>Data di Google Sheets disalin ke Supabase dan jumlah barisnya dicocokkan. Setelah itu semua pengguna perlu <b>masuk ulang</b>. Bila ada masalah, modul bisa dikembalikan kapan saja tanpa kehilangan data.', 'Ya, pindahkan'))) return;
+  await act(btn, async () => { const r = await apiM('sb.pindah', { modul: modul }, false, { timeout: 280000 }); toast(r.message, 'ok'); setTimeout(() => sbMasukUlang_('Modul sudah pindah ke server cepat. Silakan masuk kembali.'), 1200); });
+}
+async function sbKembaliUI(modul, btn) {
+  if (!(await confirmBox('<b>Kembalikan modul ini ke Apps Script?</b><br>Data terbaru di Supabase disalin kembali ke Google Sheets, lalu modul memakai Apps Script lagi.', 'Ya, kembalikan'))) return;
+  await act(btn, async () => { const r = await apiM('sb.kembali', { modul: modul }, false, { timeout: 280000 }); toast(r.message, 'ok'); setTimeout(() => sbMasukUlang_('Modul sudah dikembalikan. Silakan masuk kembali.'), 1200); });
+}
 async function saveCfg() {
   const d = collect(S.cfgF, $('#cfgForm')); if (!d) return;
   const r = await apiM('admin.configSave', d); toast(r.message, 'ok');
@@ -2768,7 +2829,8 @@ function waAddGrp(b) {
     res => {
       if (res && res.success) {
         if (!si || JSON.stringify(si.menu) !== JSON.stringify(res.data.menu) || si.user.role !== res.data.user.role) { AppState.seq++; applySession(res.data); }
-        else { AppState.user = res.data.user; AppState.config = res.data.config; saveSessInfo(res.data); buildCheck(res.data.config); }
+        else if (JSON.stringify((si.config || {}).sb || null) !== JSON.stringify(res.data.config.sb || null)) { AppState.seq++; applySession(res.data); }
+        else { AppState.user = res.data.user; AppState.config = res.data.config; sbSetConfig(res.data.config.sb); saveSessInfo(res.data); buildCheck(res.data.config); }
       } else if (si) { forceLogout(res && res.code === 'AUTH' ? 'Sesi berakhir. Silakan masuk kembali.' : (res && res.message)); }
       else { clearToken(); showLogin(res && res.code === 'AUTH' ? '' : (res && res.message)); }
     },

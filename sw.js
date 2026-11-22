@@ -19,7 +19,7 @@ self.addEventListener('fetch', e => {
   const req = e.request;
   if (req.method !== 'GET') return;
   const url = new URL(req.url);
-  if (/script\.google(usercontent)?\.com$/.test(url.hostname)) return;
+  if (/script\.google(usercontent)?\.com$/.test(url.hostname) || /\.supabase\.co$/.test(url.hostname)) return;
   if (url.origin === self.location.origin) {
     // Jaringan dulu; bila sinyal lambat (> 2,5 detik) pakai salinan tersimpan sambil tetap memperbarui di latar
     const net = fetch(req).then(res => {
