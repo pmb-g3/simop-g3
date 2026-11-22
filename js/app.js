@@ -233,8 +233,85 @@ function openForm(o) {
 }
 
 function pickImage(camera) {
-  return new Promise(res => { const i = document.createElement('input'); i.type = 'file'; i.accept = 'image/' + '*'; if (camera) i.setAttribute('capture', 'environment'); i.onchange = () => res(i.files[0] || null); i.oncancel = () => res(null); i.click(); });
+  if (camera && camLiveOk()) return camLive();
+  return pickFile(camera);
 }
+function pickFile(camera) {
+  return new Promise(res => {
+    const old = $('#pickInp'); if (old) old.remove();
+    const i = document.createElement('input'); i.type = 'file'; i.id = 'pickInp'; i.accept = 'image/' + '*'; i.tabIndex = -1; i.setAttribute('aria-hidden', 'true');
+    if (camera) i.setAttribute('capture', 'environment');
+    i.style.cssText = 'position:fixed;left:-200px;top:0;width:1px;height:1px;opacity:0';
+    document.body.appendChild(i);
+    let done = false;
+    const fin = f => { if (done) return; done = true; res(f || null); setTimeout(() => i.remove(), 500); };
+    i.addEventListener('change', () => fin(i.files && i.files[0]));
+    i.addEventListener('cancel', () => fin(null));
+    i.click();
+  });
+}
+const camLiveOk = () => !!(window.isSecureContext && navigator.mediaDevices && navigator.mediaDevices.getUserMedia);
+const CAMV = { st: null, res: null, face: 'environment' };
+function camLive() {
+  return new Promise(res => {
+    camLiveClose(null);
+    CAMV.res = res;
+    const el = document.createElement('div'); el.id = 'camv'; el.className = 'camv'; el.setAttribute('role', 'dialog'); el.setAttribute('aria-modal', 'true'); el.setAttribute('aria-label', 'Kamera');
+    el.innerHTML = `<div class="camv-top"><button type="button" class="camv-ib" data-cv="x" aria-label="Tutup kamera"><i class="bi bi-x-lg"></i></button><span>Kamera</span><button type="button" class="camv-ib" data-cv="flip" aria-label="Ganti kamera depan/belakang"><i class="bi bi-arrow-repeat"></i></button></div>
+      <div class="camv-stage"><video playsinline muted autoplay></video><div class="camv-msg" hidden></div><div class="camv-wait"><span class="spin-sm"></span> Membuka kamera…</div></div>
+      <div class="camv-bar"><button type="button" class="camv-side" data-cv="gal"><i class="bi bi-images"></i><span>Galeri</span></button><button type="button" class="camv-shot" data-cv="shot" aria-label="Ambil foto" disabled><i></i></button><button type="button" class="camv-side" data-cv="hp"><i class="bi bi-phone"></i><span>Kamera HP</span></button></div>`;
+    el.addEventListener('click', camLiveClick);
+    document.body.appendChild(el); document.body.classList.add('vw-open');
+    camLiveStart();
+  });
+}
+async function camLiveStart() {
+  const el = $('#camv'); if (!el) return;
+  if (CAMV.st) { CAMV.st.getTracks().forEach(t => t.stop()); CAMV.st = null; }
+  const v = $('video', el), shot = $('[data-cv="shot"]', el), msg = $('.camv-msg', el), wait = $('.camv-wait', el);
+  shot.disabled = true; msg.hidden = true; wait.hidden = false;
+  try {
+    const st = await navigator.mediaDevices.getUserMedia({ audio: false, video: { facingMode: { ideal: CAMV.face }, width: { ideal: 1920 }, height: { ideal: 1080 } } });
+    if (!$('#camv')) { st.getTracks().forEach(t => t.stop()); return; }
+    CAMV.st = st; v.srcObject = st;
+    try { await v.play(); } catch (e) { }
+    v.classList.toggle('mirror', CAMV.face === 'user');
+    wait.hidden = true; shot.disabled = false; shot.focus();
+  } catch (e) {
+    wait.hidden = true;
+    const izin = e && (e.name === 'NotAllowedError' || e.name === 'SecurityError');
+    msg.hidden = false;
+    msg.innerHTML = izin
+      ? '<i class="bi bi-camera-video-off"></i><b>Izin kamera ditolak</b><p>Ketuk ikon gembok di samping alamat situs → Izin → Kamera → Izinkan, lalu coba lagi. Bisa juga pakai <b>Kamera HP</b> atau <b>Galeri</b> di bawah.</p><button type="button" class="btn-x btn-p btn-sm" data-cv="retry"><i class="bi bi-arrow-clockwise"></i> Coba lagi</button>'
+      : '<i class="bi bi-camera-video-off"></i><b>Kamera tidak bisa dibuka di sini</b><p>Pakai <b>Kamera HP</b> (aplikasi kamera bawaan) atau pilih foto dari <b>Galeri</b>.</p>';
+  }
+}
+function camLiveClose(f) {
+  if (CAMV.st) { CAMV.st.getTracks().forEach(t => t.stop()); CAMV.st = null; }
+  const el = $('#camv'); if (el) el.remove();
+  if (!$('#vw')) document.body.classList.remove('vw-open');
+  const r = CAMV.res; CAMV.res = null; if (r) r(f || null);
+}
+async function camLiveClick(e) {
+  const b = e.target.closest('[data-cv]'); if (!b || b.disabled) return;
+  const k = b.dataset.cv;
+  if (k === 'x') return camLiveClose(null);
+  if (k === 'retry') return camLiveStart();
+  if (k === 'flip') { CAMV.face = CAMV.face === 'environment' ? 'user' : 'environment'; return camLiveStart(); }
+  if (k === 'gal' || k === 'hp') {
+    const r = CAMV.res; CAMV.res = null; camLiveClose(null);
+    const f = await pickFile(k === 'hp'); if (r) r(f); return;
+  }
+  if (k === 'shot') {
+    const v = $('#camv video'); if (!v || !v.videoWidth) return;
+    b.disabled = true;
+    const c = document.createElement('canvas'); c.width = v.videoWidth; c.height = v.videoHeight;
+    const g = c.getContext('2d'); if (CAMV.face === 'user') { g.translate(c.width, 0); g.scale(-1, 1); } g.drawImage(v, 0, 0);
+    $('#camv').classList.add('flash');
+    c.toBlob(bl => { camLiveClose(bl ? new File([bl], 'foto.jpg', { type: 'image/jpeg' }) : null); }, 'image/jpeg', 0.92);
+  }
+}
+document.addEventListener('keydown', e => { if (e.key === 'Escape' && $('#camv')) { e.preventDefault(); camLiveClose(null); } });
 function loadImg(file) {
   return new Promise((res, rej) => { const u = URL.createObjectURL(file), im = new Image(); im.onload = () => { URL.revokeObjectURL(u); res(im); }; im.onerror = () => { URL.revokeObjectURL(u); rej(new Error('Foto tidak dapat dibaca. Gunakan JPG atau PNG.')); }; im.src = u; });
 }
@@ -701,7 +778,7 @@ function bootHtml() {
   const arcs = [1, 2, 3, 4, 5, 6].map(i => `<span class="arc a${i}"></span>`).join('');
   return `<div class="boot" role="status" aria-live="polite" aria-label="Memuat aplikasi"><div class="boot-stage">${arcs}<div class="boot-logo">${logoImg()}</div></div></div>`;
 }
-const NEED_BUILD = 20261122;
+const NEED_BUILD = 20261123;
 function buildCheck(cfg) {
   const b = Number(cfg && cfg.build || 0), old = $('#buildWarn');
   if (b >= NEED_BUILD) { if (old) old.remove(); return; }
@@ -2408,7 +2485,7 @@ PAGES.blangko = async function (o) {
   const tabs = [['hari', 'bi-pencil-square', 'Isi blangko'], ['status', 'bi-list-check', 'Status'], ['rekap', 'bi-table', 'Rekap pekanan'], ['jadwal', 'bi-calendar-week', 'Jadwal PJ']].filter(t => t[0] !== 'rekap' || isStaff());
   return {
     html: `<div id="blRoot"><div class="page-head"><div><h1>Blangko pengawasan</h1><p>Pengawas piket Kamar Mandi &amp; Pertamanan \u00B7 3\u00D7 keliling, diserahkan pukul 16.00.</p></div></div>
-    <div class="chips mb2" role="tablist">${tabs.map(t => `<button type="button" class="chip-f${B.tab === t[0] ? ' on' : ''}" role="tab" aria-selected="${B.tab === t[0]}" onclick="navigateTo('blangko',{tab:'${t[0]}'})"><i class="bi ${t[1]}"></i> ${t[2]}</button>`).join('')}</div>${body}</div>`,
+    <div class="chips mb2 bl-tabs n${tabs.length}" role="tablist">${tabs.map(t => `<button type="button" class="chip-f${B.tab === t[0] ? ' on' : ''}" role="tab" aria-selected="${B.tab === t[0]}" onclick="navigateTo('blangko',{tab:'${t[0]}'})"><i class="bi ${t[1]}"></i> ${t[2]}</button>`).join('')}</div>${body}</div>`,
     init: blInit
   };
 };
@@ -2418,6 +2495,8 @@ const blCk = (path, val, label, dis) => `<label class="bl-ck"><input type="check
 const blIn = (path, val, ph, dis, cls, type) => `<input class="inp inp-sm ${cls || ''}" ${type ? `type="${type}"` : ''} data-k="${path}" value="${E(val || '')}" placeholder="${E(ph || '')}" aria-label="${E(ph || '')}" maxlength="300"${dis ? ' disabled' : ''}>`;
 function blSum(v) { v = v || {}; return BL_SES.map(S2 => `<i class="k-${v[S2.k] || 'x'}">${S2.a} ${v[S2.k] || '\u2013'}</i>`).join(''); }
 const blNeed = v => !!v && ['p', 's', 'o'].some(k => v[k] === 'K') && !String(v.cat || '').trim();
+const blKelN = k => { const B = S.bl, L = B.h.ctx.lok; return L.filter(l => B.d.km.n[l] && B.d.km.n[l][k]).length + '/' + L.length; };
+function blJump(sel) { const el = $(sel); if (!el) return; const top = el.getBoundingClientRect().top + window.scrollY - 72; window.scrollTo({ top: top, behavior: 'smooth' }); }
 
 function blHariHtml() {
   const B = S.bl, h = B.h, c = h.ctx, d = B.d, rec = h.rec || {}, dis = !h.bisa.isi, def = h.def, st = rec.Status || 'Belum';
@@ -2434,6 +2513,7 @@ function blHariHtml() {
       <div><span class="lbl">Diserahkan jam</span><b>${serah ? E(serah.jam) : '\u2013'}</b>${rec.Terlambat === 'Ya' ? ' <span class="pill pill-warn">Terlambat</span>' : ''}</div>
     </div>
     <div class="bl-prog"><div class="row-f between gap2 wrap"><span id="blSt">${blStPill(st)}</span><span class="bl-sync" id="blSync" aria-live="polite"></span></div><div class="progress-x" role="progressbar" aria-label="Kelengkapan blangko" aria-valuenow="${rec.Progres || 0}" aria-valuemin="0" aria-valuemax="100"><i id="blBar" style="width:${rec.Progres || 0}%"></i></div><small class="muted" id="blPr">${rec.Progres || 0}% terisi</small></div>
+    <nav class="bl-jump" aria-label="Lompat ke bagian"><button type="button" onclick="blJump('.bl-sec.km')"><i class="bi bi-droplet-half"></i> Kamar mandi</button><button type="button" onclick="blJump('.bl-sec.pt')"><i class="bi bi-tree"></i> Pertamanan</button><button type="button" onclick="blJump('.bl-bawah')"><i class="bi bi-camera"></i> Catatan &amp; serahkan</button></nav>
     ${dis ? `<div class="bl-warn"><i class="bi bi-lock"></i><div>${E(h.bisa.alasan)}${h.bisa.badal ? `<div class="mt1"><button class="btn-x btn-w btn-sm" onclick="blBadal(this)"><i class="bi bi-person-raised-hand"></i> Saya badal hari ini</button></div>` : ''}</div></div>` : ''}
   </section>`;
   let no = 0;
@@ -2450,7 +2530,7 @@ function blHariHtml() {
   }).join('');
   const ses = B.ses || 'all';
   const km = `<section class="card-x bl-sec km"><h2><span>A. KAMAR MANDI</span><small>3\u00D7 keliling: pagi 08.15 \u00B7 siang 13.00 \u00B7 sore 15.15</small></h2>
-    <div class="bl-kel" role="group" aria-label="Tampilkan keliling">${BL_SES.map(S2 => `<button type="button" class="chip-f${ses === S2.k ? ' on' : ''}" data-ses="${S2.k}">${S2.n} ${S2.m}</button>`).join('')}<button type="button" class="chip-f${ses === 'all' ? ' on' : ''}" data-ses="all">Semua</button></div>
+    <div class="bl-kel" role="group" aria-label="Tampilkan keliling">${BL_SES.map(S2 => `<button type="button" class="chip-f${ses === S2.k ? ' on' : ''}" data-ses="${S2.k}"><span>${S2.n} <small>${S2.m}</small></span><b data-kc="${S2.k}">${blKelN(S2.k)}</b></button>`).join('')}<button type="button" class="chip-f${ses === 'all' ? ' on' : ''}" data-ses="all"><span>Semua</span><b>3×</b></button></div>
     <div class="bl-km ses-${ses}" id="blKm"><div class="bl-r bl-hd" aria-hidden="true"><span>No</span><span>Lokasi (urut rute) \u00B7 Pekerja</span><span>Pagi</span><span>Siang</span><span>Sore</span><span>Temuan &amp; tindak lanjut</span></div>${rows}</div>
     <div class="bl-cks">${blCk('km.siang', d.km.siang, '<b>Siang:</b> ' + E(c.kmSiang), dis)}${blCk('km.sore', d.km.sore, '<b>Sore:</b> keran &amp; pompa mati', dis)}</div>
     <p class="bl-ket">${E(def.ket.km)}</p></section>`;
@@ -2469,6 +2549,7 @@ function blHariHtml() {
     <p class="bl-ket"><span class="${c.pekan === 'A' ? 'on' : ''}">${E(def.ket.A)}</span> <span class="${c.pekan === 'B' ? 'on' : ''}">${E(def.ket.B)}</span></p></section>`;
   const per = rec.Status === 'Diperiksa';
   const bawah = `<section class="bl-bawah">
+    ${blFotoCard(d, dis)}
     <div class="card-x"><label class="lbl" for="blKer">Kerusakan / kebutuhan material esok hari</label><textarea class="inp" id="blKer" rows="3" data-k="bawah.kerusakan" maxlength="2000"${dis ? ' disabled' : ''}>${E(d.bawah.kerusakan || '')}</textarea></div>
     <div class="card-x"><label class="lbl" for="blIzin">Pekerja izin / tidak di lokasi / titik susulan</label><textarea class="inp" id="blIzin" rows="3" data-k="bawah.izin" maxlength="2000"${dis ? ' disabled' : ''}>${E(d.bawah.izin || '')}</textarea></div>
     <div class="card-x bl-ttd"><span class="lbl">Pengawas piket</span>${serah ? `<div><i class="bi bi-check-circle-fill" style="color:var(--em-a)"></i> <b>${E(serah.nama)}</b><small class="muted d-block">Diserahkan pukul ${E(serah.jam)}${rec.Terlambat === 'Ya' ? ' (lewat 16.00)' : ''}</small></div>` : '<div class="muted">Belum diserahkan</div>'}
@@ -2480,12 +2561,84 @@ function blHariHtml() {
   return top + `<div class="bl-main">${km}${tm}</div>` + bawah;
 }
 
+const BL_FJ = { 'Usulan kebersihan': ['info', 'bi-stars'], 'Perlu perbaikan': ['warn', 'bi-tools'], 'Lainnya': ['muted', 'bi-chat-left-text'] }, BL_FMAX = 12;
+const blFotos = d => (d && d.bawah && Array.isArray(d.bawah.foto) ? d.bawah.foto : []);
+const blFjPill = j => { const x = BL_FJ[j] || BL_FJ.Lainnya; return `<span class="pill pill-${x[0]}"><i class="bi ${x[1]}"></i> ${E(j || 'Lainnya')}</span>`; };
+function blFotoCard(d, dis) {
+  const F = blFotos(d), penuh = F.length >= BL_FMAX;
+  const items = F.map((x, i) => `<div class="bl-fi"><button type="button" class="bl-fth loading" data-thumb="${E(x.th || x.u)}" data-title="${E(x.c || 'Foto catatan')}" onclick="blFotoView(${i})" aria-label="Lihat foto ${i + 1}"></button>
+    <div class="bl-fx">${blFjPill(x.j)}${x.lok ? `<b>${E(x.lok)}</b>` : ''}<p>${E(x.c || '')}</p><small>${E([x.t, x.by].filter(Boolean).join(' · '))}</small></div>
+    ${dis ? '' : `<div class="bl-fa"><button type="button" class="btn-x btn-o btn-sm" onclick="blFotoForm(${i})" aria-label="Ubah catatan foto ${i + 1}"><i class="bi bi-pencil"></i></button><button type="button" class="btn-x btn-d btn-sm" onclick="blFotoDel(${i})" aria-label="Hapus foto ${i + 1}"><i class="bi bi-trash"></i></button></div>`}</div>`).join('');
+  return `<div class="card-x bl-foto"><div class="bl-fh"><div><span class="lbl mb0">Catatan bergambar</span><small class="muted">Usulan kebersihan untuk periode berikutnya, kerusakan yang perlu diperbaiki, atau temuan lain. Foto + catatan singkat.</small></div>
+    ${dis ? '' : `<div class="bl-fb"><button type="button" class="btn-x btn-p btn-sm" onclick="blFotoAdd(true)"${penuh ? ' disabled' : ''}><i class="bi bi-camera-fill"></i> Foto</button><button type="button" class="btn-x btn-o btn-sm" onclick="blFotoAdd(false)"${penuh ? ' disabled' : ''}><i class="bi bi-images"></i> Galeri</button></div>`}</div>
+    ${F.length ? `<div class="bl-fl">${items}</div>` : `<div class="bl-f0 muted">${dis ? 'Tidak ada catatan bergambar.' : 'Belum ada. Ketuk <b>Foto</b> untuk memotret tempat yang perlu dilaporkan.'}</div>`}
+    ${penuh && !dis ? `<small class="muted">Maksimal ${BL_FMAX} foto per hari.</small>` : ''}</div>`;
+}
+function blFotoPaint() {
+  const B = S.bl, el = $('#blRoot .bl-foto'); if (!B || !el) return;
+  el.outerHTML = blFotoCard(B.d, !B.h.bisa.isi);
+  loadThumbs($('#blRoot .bl-foto'));
+}
+async function blFotoAdd(camera) {
+  const B = S.bl; if (!B || !B.h || !B.h.bisa.isi) return;
+  if (blFotos(B.d).length >= BL_FMAX) return toast('Maksimal ' + BL_FMAX + ' foto per hari.', 'err');
+  const f = await pickImage(camera); if (!f) return;
+  let c;
+  try { toast('Menyiapkan foto…'); c = await compressImage(f); } catch (e) { return toast(e.message, 'err'); }
+  blFotoForm(-1, c);
+}
+function blFotoForm(i, c) {
+  const B = S.bl, tgl = B.h.ctx.tanggal, F = blFotos(B.d), old = i >= 0 ? F[i] : null;
+  if (i >= 0 && !old) return;
+  const def = B.h.def, lokList = B.h.ctx.lok.map(k => def.lok[k].n).concat(B.h.ctx.titik.map(x => x.n));
+  const src = c ? c.preview : (old && AppState.img[old.th || old.u]) || '';
+  openForm({
+    title: old ? 'Ubah catatan bergambar' : 'Catatan bergambar baru', submit: old ? 'Simpan' : 'Unggah & simpan',
+    fields: [
+      { k: 'pv', t: 'html', html: src ? `<img class="preview-img bl-fpv" alt="Foto catatan" src="${src}">${c ? `<small class="muted d-block tc">Sudah dikompres ${c.kb} KB</small>` : ''}` : '' },
+      { k: 'j', l: 'Jenis', t: 'select', opts: Object.keys(BL_FJ), full: true },
+      { k: 'lok', l: 'Lokasi', full: true, ml: 120, list: lokList, ph: 'Mis. Madinah Atas, taman depan masjid' },
+      { k: 'c', l: 'Catatan', t: 'textarea', req: true, full: true, ml: 500, ph: 'Apa yang perlu dilakukan? Mis. diusulkan dibersihkan pekan depan, keran bocor perlu diganti.' }
+    ],
+    values: old || { j: 'Usulan kebersihan' },
+    save: async d => {
+      const it = { j: d.j, lok: d.lok, c: d.c };
+      if (old) Object.assign(it, { u: old.u, th: old.th, t: old.t, by: old.by });
+      else {
+        const r = await apiM('foto.blangko', { tanggal: tgl, data: c.data, mime: c.mime, thumb: c.thumb }, true);
+        const n = new Date();
+        Object.assign(it, { u: r.data.u, th: r.data.th, t: pad(n.getHours()) + ':' + pad(n.getMinutes()), by: AppState.user.nama || '' });
+        const seed = {}; seed[it.u] = c.thumbUrl; if (it.th) seed[it.th] = c.thumbUrl;
+        Object.keys(seed).forEach(u => { AppState.img[u] = seed[u]; }); thPutMany(seed); fullPut(it.u, c.preview);
+      }
+      if (S.bl !== B) throw new Error('Halaman blangko sudah berganti. Buka kembali tanggal ' + fdA(tgl) + '.');
+      const arr = blFotos(B.d).slice();
+      if (old) { const k = arr.indexOf(old); if (k >= 0) arr[k] = it; else arr.push(it); } else arr.push(it);
+      blSet('bawah.foto', arr);
+      closeModal(); blFotoPaint();
+      toast(old ? 'Catatan foto diperbarui.' : 'Foto tersimpan. Catatan ikut tersinkron bersama blangko.', 'ok');
+    }
+  });
+}
+async function blFotoDel(i) {
+  const B = S.bl, x = blFotos(B.d)[i]; if (!x) return;
+  if (!(await confirmBox('Hapus foto catatan ini dari blangko?', 'Ya, hapus'))) return;
+  blSet('bawah.foto', blFotos(B.d).filter(y => y !== x));
+  blFotoPaint();
+  apiM('foto.blangkoDel', { u: x.u, th: x.th }, true, { silent: true }).catch(() => { });
+}
+function blFotoView(i) {
+  const B = S.bl, F = blFotos(B.d), tg = fdA(B.h.ctx.tanggal);
+  viewerOpen(F.map(x => ({ url: x.u, th: x.th, title: x.c || x.j, sub: [x.j, x.lok].filter(Boolean).join(' · '), meta: [x.t, x.by].filter(Boolean).join(' · ') })), i, { kicker: 'Catatan bergambar · ' + tg, foot: 'Geser foto untuk berpindah' });
+}
+
 const BL_FRESH = {};
 function blInit(c0) {
   const B = S.bl; if (!B) return;
   const c = $('#blRoot', c0) || c0;
   if (B.tab === 'hari' && B.h && !B.h.ctx.jumat) {
     blSyncPaint();
+    loadThumbs($('.bl-foto', c));
     if (Object.keys(B.dirty).length) blQueue(400);
     const tg0 = B.h.ctx.tanggal;
     if (Date.now() - (BL_FRESH[tg0] || 0) > 15000) {
@@ -2512,10 +2665,12 @@ function blInit(c0) {
     c.addEventListener('input', e => { if (e.target.type !== 'checkbox') onIn(e); });
     c.addEventListener('change', e => { if (e.target.type === 'checkbox') onIn(e); });
   }
+  if (B.tab === 'rekap') loadThumbs(c);
   if (B.tab === 'status') c.addEventListener('click', e => { const r = e.target.closest('[data-bltgl]'); if (r) navigateTo('blangko', { tab: 'hari', tgl: r.dataset.bltgl }); });
 }
 function blRowPaint(path, c) {
   const m = path.match(/^km\.n\.(\w+)\./); if (!m) return;
+  $$('[data-kc]', c).forEach(b => { b.textContent = blKelN(b.dataset.kc); });
   const v = S.bl.d.km.n[m[1]] || {}, s = $(`[data-sum="${m[1]}"]`, c), ci = $(`[data-k="km.n.${m[1]}.cat"]`, c);
   if (s) s.innerHTML = blSum(v);
   if (ci) ci.classList.toggle('need', blNeed(v));
@@ -2630,7 +2785,12 @@ function blRekapHtml() {
     <h3 class="bl-sub mt2">Pertamanan</h3>
     <div class="tbl-wrap"><table class="tbl"><thead><tr><th>Hari</th><th>Zona</th><th>Tidak hadir apel</th><th>Rute inti</th><th>Di zona</th><th>Truk</th><th class="n">Titik tuntas</th><th>Belum / susulan</th><th>Alat</th><th>Mesin</th><th>Nilai</th></tr></thead><tbody>${tm}</tbody></table></div>
     ${R0.catatan.length ? `<h3 class="bl-sub mt2">Catatan harian</h3><div class="tbl-wrap"><table class="tbl"><thead><tr><th>Hari</th><th>Kerusakan / kebutuhan material</th><th>Pekerja izin / tidak di lokasi / titik susulan</th></tr></thead><tbody>${R0.catatan.map(x => `<tr><td><b>${E(x.hari)}</b></td><td>${E(x.kerusakan || '\u2013')}</td><td>${E(x.izin || '\u2013')}</td></tr>`).join('')}</tbody></table></div>` : ''}
+    ${(R0.foto || []).length ? `<h3 class="bl-sub mt2">Catatan bergambar <small>(${R0.foto.length} foto \u00b7 ikut diekspor sebagai lampiran)</small></h3><div class="bl-rf">${R0.foto.map((x, i) => `<button type="button" class="bl-rfi" onclick="blRekapFoto(${i})"><span class="bl-fth loading" data-thumb="${E(x.th || x.u)}" data-title="${E(x.c || 'Foto')}"></span><span class="bl-rfx">${blFjPill(x.j)}<b>${E(x.hari)}${x.lok ? ' \u00b7 ' + E(x.lok) : ''}</b><small>${E(x.c || '')}</small></span></button>`).join('')}</div>` : ''}
   </section>`;
+}
+function blRekapFoto(i) {
+  const F = (S.bl.rek && S.bl.rek.foto) || [];
+  viewerOpen(F.map(x => ({ url: x.u, th: x.th, title: x.c || x.j, sub: [x.hari + ', ' + fdate(x.tanggal), x.j, x.lok].filter(Boolean).join(' \u00b7 '), meta: [x.t, x.by].filter(Boolean).join(' \u00b7 ') })), i, { kicker: 'Catatan bergambar \u00b7 ' + S.bl.rek.label, foot: 'Geser foto untuk berpindah' });
 }
 function blExport(btn) { return act(btn, async () => { toast('Membuat rekap di Google Drive\u2026'); const r = await apiM('blangko.exportRekap', { start: S.bl.rek.start }, false, { timeout: 280000 }); showExport(r.data, 'Buka Google Docs'); }); }
 
@@ -2664,7 +2824,8 @@ function blPrint() {
   const T = d.taman, kh = T.khusus || {};
   const apel = def.tamanPekerja.map((n, i) => { const a = T.apel[i] || {}; return `<tr><td>${E(n)}</td><td class="c">${ring(a.h === 'Y' ? '\u2713' : a.h === 'T' ? '\u2717' : '', ['\u2713', '\u2717'])}</td><td>${E(a.j || '')}</td><td class="p">${E(a.k || '')}</td></tr>`; }).join('');
   const titik = c.titik.map(x => { const v = T.titik[x.no] || {}; return `<tr><td class="n">${x.no}</td><td>${E(x.n)}</td><td class="c">${ring(v.t === 'Y' ? 'Ya' : v.t === 'B' ? 'Blm' : '', ['Ya', 'Blm'])}</td><td class="p">${E(v.c || '')}</td></tr>`; }).join('') + `<tr><td class="n">${c.titik.length + 1}</td><td class="p">Tugas khusus: ${E(kh.tugas || '\u2026\u2026\u2026\u2026')}</td><td class="c">${ring(kh.t === 'Y' ? 'Ya' : kh.t === 'B' ? 'Blm' : '', ['Ya', 'Blm'])}</td><td class="p">${E(kh.c || '')}</td></tr>`;
-  const css = '@page{size:330mm 215mm;margin:8mm 10mm}*{box-sizing:border-box;margin:0;padding:0}body{font-family:"Segoe UI",Arial,sans-serif;color:#1b1f1c;font-size:9pt}.top{display:flex;justify-content:space-between;align-items:flex-end;border-bottom:2px solid #1f6f43;padding-bottom:3px}.top .k{font-size:7.2pt;font-weight:600;color:#555}.top h1{font-size:14pt;color:#1f6f43}.hari{background:#1f6f43;color:#fff;font-weight:800;font-size:15pt;padding:2px 14px;border-radius:5px}.isi{display:flex;gap:14px;margin:5px 0 4px;font-size:9.5pt}.isi span{border-bottom:1px dotted #777;padding:0 6px 1px;flex:1}.isi b{white-space:nowrap}.main{display:grid;grid-template-columns:57fr 43fr;gap:10px}h2{font-size:10pt;color:#fff;padding:2px 7px;border-radius:4px 4px 0 0;display:flex;justify-content:space-between}h2 small{font-weight:400;font-size:8pt}.km h2{background:#1d5fa8}.pt h2{background:#2f7d32}table{width:100%;border-collapse:collapse}th,td{border:1px solid #8f9a93;padding:0 4px;height:7mm;vertical-align:middle}th{background:#eef1ef;font-size:7.6pt;height:auto;padding:2px 3px}td.c{text-align:center;white-space:nowrap;color:#9aa39d}td.c span{display:inline-block;min-width:4.4mm;margin:0 1px}td.c span.on,.ring span.on{color:#000;font-weight:800;border:1.4px solid #000;border-radius:50%}td.n{text-align:center;width:6mm;color:#555}td.p{font-size:7.8pt;color:#333}tr.grp td{background:#f4f6f5;font-size:7.6pt;font-weight:700;color:#555;height:4.6mm}.cek{display:flex;flex-wrap:wrap;gap:3px 14px;font-size:8.4pt;margin:4px 0 2px}.box{display:inline-block;width:3.4mm;height:3.4mm;border:1px solid #555;margin:0 3px 0 6px;text-align:center;line-height:3mm;font-size:7pt;font-weight:800}.ring span{padding:0 2px;margin:0 2px}.ket{font-size:7.4pt;color:#444;margin-top:3px}.sub{font-size:8.4pt;font-weight:700;color:#2f7d32;margin:5px 0 2px}.bawah{display:grid;grid-template-columns:1.5fr 1fr .7fr .7fr;gap:8px;margin-top:6px;min-height:21mm}.bawah div{border:1px solid #8f9a93;border-radius:4px;padding:2px 6px;font-size:8pt}.bawah b{display:block;color:#444}.ttd{text-align:center}';
+  const css = '@page{size:330mm 215mm;margin:8mm 10mm}*{box-sizing:border-box;margin:0;padding:0}body{font-family:"Segoe UI",Arial,sans-serif;color:#1b1f1c;font-size:9pt}.top{display:flex;justify-content:space-between;align-items:flex-end;border-bottom:2px solid #1f6f43;padding-bottom:3px}.top .k{font-size:7.2pt;font-weight:600;color:#555}.top h1{font-size:14pt;color:#1f6f43}.hari{background:#1f6f43;color:#fff;font-weight:800;font-size:15pt;padding:2px 14px;border-radius:5px}.isi{display:flex;gap:14px;margin:5px 0 4px;font-size:9.5pt}.isi span{border-bottom:1px dotted #777;padding:0 6px 1px;flex:1}.isi b{white-space:nowrap}.main{display:grid;grid-template-columns:57fr 43fr;gap:10px}h2{font-size:10pt;color:#fff;padding:2px 7px;border-radius:4px 4px 0 0;display:flex;justify-content:space-between}h2 small{font-weight:400;font-size:8pt}.km h2{background:#1d5fa8}.pt h2{background:#2f7d32}table{width:100%;border-collapse:collapse}th,td{border:1px solid #8f9a93;padding:0 4px;height:7mm;vertical-align:middle}th{background:#eef1ef;font-size:7.6pt;height:auto;padding:2px 3px}td.c{text-align:center;white-space:nowrap;color:#9aa39d}td.c span{display:inline-block;min-width:4.4mm;margin:0 1px}td.c span.on,.ring span.on{color:#000;font-weight:800;border:1.4px solid #000;border-radius:50%}td.n{text-align:center;width:6mm;color:#555}td.p{font-size:7.8pt;color:#333}tr.grp td{background:#f4f6f5;font-size:7.6pt;font-weight:700;color:#555;height:4.6mm}.cek{display:flex;flex-wrap:wrap;gap:3px 14px;font-size:8.4pt;margin:4px 0 2px}.box{display:inline-block;width:3.4mm;height:3.4mm;border:1px solid #555;margin:0 3px 0 6px;text-align:center;line-height:3mm;font-size:7pt;font-weight:800}.ring span{padding:0 2px;margin:0 2px}.ket{font-size:7.4pt;color:#444;margin-top:3px}.sub{font-size:8.4pt;font-weight:700;color:#2f7d32;margin:5px 0 2px}.bawah{display:grid;grid-template-columns:1.5fr 1fr .7fr .7fr;gap:8px;margin-top:6px;min-height:21mm}.bawah div{border:1px solid #8f9a93;border-radius:4px;padding:2px 6px;font-size:8pt}.bawah b{display:block;color:#444}.ttd{text-align:center}.lamp{break-before:page;page-break-before:always}.fg{display:grid;grid-template-columns:repeat(4,1fr);gap:5mm;margin-top:4mm}.fc{break-inside:avoid;font-size:8.4pt}.fc img,.fc .ph{width:100%;height:56mm;object-fit:cover;border:1px solid #8f9a93;border-radius:3px;display:block;margin-bottom:2px}.fc .ph{display:grid;place-items:center;color:#888}.fc p{margin:1px 0}.fc small{color:#666}';
+  const FT2 = blFotos(d);
   const html = `<!doctype html><html lang="id"><head><meta charset="utf-8"><title>Blangko ${E(c.tanggal)}</title><style>${css}</style></head><body>
   <div class="top"><div><div class="k">BAGIAN PEMBANGUNAN \u2014 PONDOK MODERN DARUSSALAM GONTOR KAMPUS 3 \u201CDARUL MA\u2019RIFAT\u201D</div><h1>BLANGKO HARIAN PENGAWAS PIKET \u00B7 KAMAR MANDI &amp; PERTAMANAN</h1></div><div class="hari">${E(c.hari.toUpperCase())}</div></div>
   <div class="isi"><b>Tanggal:</b><span>${E(fdate(c.tanggal))}</span><b>Pengawas:</b><span style="flex:2">${E(rec.PengawasNama || '')}</span><b class="ring">Pekan: ${ring(c.pekan, ['A', 'B'])}</b><b>Diserahkan jam:</b><span>${E(serah ? serah.jam : '')}</span></div>
@@ -2679,6 +2840,7 @@ function blPrint() {
   <div class="cek"><span>${box(T.alat, 'Alat dicuci &amp; disimpan')}</span><span class="ring">Mesin rumput: ${ring(T.mesin, ['Baik', 'Servis'])}</span><span class="ring">Nilai hari ini: ${ring(T.nilai, ['B', 'C', 'K'])}</span></div>
   <div class="ket">${E(def.ket.A)} ${E(def.ket.B)}</div></div></div>
   <div class="bawah"><div><b>Kerusakan / kebutuhan material esok hari:</b>${E(d.bawah.kerusakan || '')}</div><div><b>Pekerja izin / tidak di lokasi / titik susulan:</b>${E(d.bawah.izin || '')}</div><div class="ttd"><b>Pengawas Piket</b><br>${serah ? E(serah.nama) + '<br><small>diserahkan ' + E(serah.jam) + '</small>' : '<br>( \u2026\u2026\u2026\u2026 )'}</div><div class="ttd"><b>Diperiksa Pelaksana Pembangunan</b><br>${rec.Status === 'Diperiksa' ? E(rec.DiperiksaOleh) : '<br>( \u2026\u2026\u2026\u2026 )'}</div></div>
+  ${FT2.length ? `<div class="lamp"><h2 style="background:#1f6f43">LAMPIRAN \u00b7 CATATAN BERGAMBAR <small>${E(c.hari)}, ${E(fdate(c.tanggal))}</small></h2><div class="fg">${FT2.map((x, i) => { const src = AppState.img[x.th || x.u] || AppState.full[x.u] || ''; return `<div class="fc">${src ? `<img alt="" src="${src}">` : '<div class="ph">foto belum dimuat</div>'}<b>${i + 1}. ${E(x.j || '')}${x.lok ? ' \u00b7 ' + E(x.lok) : ''}</b><p>${E(x.c || '')}</p><small>${E([x.t, x.by].filter(Boolean).join(' \u00b7 '))}</small></div>`; }).join('')}</div></div>` : ''}
   <script>setTimeout(function(){window.print()},300)<\/script></body></html>`;
   const w = window.open('', '_blank');
   if (!w) { toast('Jendela cetak diblokir browser. Izinkan pop-up untuk SIMOP.', 'err'); return; }

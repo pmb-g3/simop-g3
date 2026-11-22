@@ -1274,3 +1274,78 @@ body.auth-mode .page{background:transparent;border:0;box-shadow:none;border-radi
   .bl-ap .bl-jam{min-width:0;width:104px!important}
   .bl-tbl .bl-b{min-width:44px}
 }
+
+/* ── Kamera dalam aplikasi (pickImage → camLive) ── */
+.camv{position:fixed;inset:0;z-index:2100;background:#000;color:#fff;display:flex;flex-direction:column;padding:env(safe-area-inset-top,0px) 0 var(--safe-b)}
+.camv-top{display:flex;align-items:center;justify-content:space-between;padding:.6rem .75rem;font-weight:700}
+.camv-ib{width:44px;height:44px;border-radius:50%;border:0;background:rgba(255,255,255,.14);color:#fff;font-size:20px;display:grid;place-items:center;cursor:pointer}
+.camv-stage{position:relative;flex:1;min-height:0;overflow:hidden;display:grid;place-items:center}
+.camv-stage video{width:100%;height:100%;object-fit:cover;background:#000}
+.camv-stage video.mirror{transform:scaleX(-1)}
+.camv-wait{position:absolute;display:flex;gap:.5rem;align-items:center;font-size:14px;opacity:.85}
+.camv-msg{position:absolute;inset:auto 1rem;max-width:420px;margin:auto;background:rgba(20,24,32,.92);border-radius:1rem;padding:1.1rem;text-align:center;display:grid;gap:.45rem;justify-items:center}
+.camv-msg[hidden]{display:none}
+.camv-msg .bi{font-size:34px}.camv-msg p{font-size:13.5px;opacity:.85;margin:0}
+.camv-bar{display:grid;grid-template-columns:1fr auto 1fr;align-items:center;padding:1rem .75rem 1.25rem;gap:.5rem}
+.camv-side{border:0;background:none;color:#fff;display:flex;flex-direction:column;align-items:center;gap:.2rem;font-size:12px;font-weight:600;cursor:pointer;min-height:48px}
+.camv-side .bi{font-size:24px}
+.camv-shot{width:76px;height:76px;border-radius:50%;border:4px solid #fff;background:transparent;padding:5px;cursor:pointer}
+.camv-shot i{display:block;width:100%;height:100%;border-radius:50%;background:#fff;transition:transform .12s}
+.camv-shot:active i{transform:scale(.88)}
+.camv-shot:disabled{opacity:.4}
+.camv.flash .camv-stage::after{content:"";position:absolute;inset:0;background:#fff;animation:camFlash .25s ease-out forwards}
+@keyframes camFlash{from{opacity:.85}to{opacity:0}}
+
+/* ── Blangko: catatan bergambar ── */
+.bl-bawah>.bl-foto{grid-column:1/-1}
+.bl-fh{display:flex;justify-content:space-between;align-items:flex-start;gap:.75rem;flex-wrap:wrap;margin-bottom:.6rem}
+.bl-fh small{display:block;font-size:12.5px;max-width:560px}
+.bl-fh .mb0{margin-bottom:.1rem}
+.bl-fb{display:flex;gap:.5rem}
+.bl-fl{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:.6rem}
+.bl-fi{display:grid;grid-template-columns:88px minmax(0,1fr) auto;gap:.65rem;align-items:start;border:1px solid var(--border);border-radius:.8rem;padding:.5rem;background:var(--surface)}
+.bl-fth{width:88px;height:88px;border-radius:.6rem;border:0;padding:0;overflow:hidden;background:var(--surface-2);cursor:zoom-in;display:block;position:relative}
+.bl-fth img{width:100%;height:100%;object-fit:cover;display:block}
+.bl-fth.loading::after{content:"";position:absolute;inset:0;background:linear-gradient(90deg,transparent,rgba(127,127,127,.18),transparent);background-size:200% 100%;animation:shimmer 1.2s infinite}
+.bl-fth .empty{height:100%;display:grid;place-items:center}
+.bl-fx{min-width:0;display:flex;flex-direction:column;gap:.2rem;font-size:13.5px}
+.bl-fx .pill{align-self:flex-start}
+.bl-fx p{margin:0;line-height:1.35;overflow-wrap:anywhere}
+.bl-fx small{color:var(--muted);font-size:11.5px}
+.bl-fa{display:flex;flex-direction:column;gap:.35rem}
+.bl-f0{font-size:13.5px;padding:.4rem 0}
+.bl-fpv{max-height:42vh;width:100%;object-fit:contain;border-radius:.6rem}
+.bl-rf{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:.6rem;margin:0 1rem 1rem}
+.bl-rfi{display:grid;grid-template-columns:72px minmax(0,1fr);gap:.6rem;text-align:left;border:1px solid var(--border);border-radius:.75rem;padding:.45rem;background:var(--surface);color:var(--text);cursor:pointer}
+.bl-rfi .bl-fth{width:72px;height:72px}
+.bl-rfx{display:flex;flex-direction:column;gap:.2rem;min-width:0;font-size:13px}
+.bl-rfx small{color:var(--muted);overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
+@media (max-width:767.98px){
+  .bl-fl{grid-template-columns:1fr}
+  .bl-fb{width:100%}.bl-fb .btn-x{flex:1;justify-content:center;min-height:44px}
+  .bl-fi{grid-template-columns:76px minmax(0,1fr) auto}
+  .bl-fth{width:76px;height:76px}
+  .bl-fa .btn-x{min-width:40px;min-height:40px}
+  .bl-rf{grid-template-columns:1fr;margin:0 .75rem .75rem}
+}
+
+/* ── Blangko: ramah HP (tab tidak terpotong, keliling menempel, isian 16px agar iPhone tidak memperbesar layar) ── */
+.bl-jump{display:flex;gap:.4rem;flex-wrap:wrap;margin-top:.75rem}
+.bl-jump button{border:1px solid var(--border);background:var(--surface-2);color:var(--text-2);border-radius:999px;padding:.35rem .75rem;font-size:12.5px;font-weight:600;cursor:pointer;min-height:36px}
+.bl-kel .chip-f{display:flex;flex-direction:column;align-items:center;line-height:1.15;padding:.3rem .4rem}
+.bl-kel .chip-f small{font-weight:500;opacity:.8}
+.bl-kel .chip-f b{font-size:11.5px;font-weight:700;opacity:.85}
+@media (max-width:767.98px){
+  .bl-tabs{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));overflow:visible}
+  .bl-tabs.n3{grid-template-columns:repeat(3,minmax(0,1fr))}
+  .bl-tabs .chip-f{justify-content:center;padding:.45rem .4rem;min-height:42px;overflow:hidden;text-overflow:ellipsis}
+  .bl-kel{display:grid!important;grid-template-columns:repeat(4,minmax(0,1fr));gap:.35rem;overflow:visible;position:sticky;top:64px;z-index:5;background:var(--surface);margin:0!important;padding:.5rem .75rem;border-bottom:1px solid var(--border)}
+  .bl-kel .chip-f{min-height:48px;white-space:normal;font-size:13px}
+  .bl-kel .chip-f small{display:none}
+  .bl-jump button{flex:1 1 auto;min-height:40px}
+  #blRoot .inp,#blRoot .inp-sm{font-size:16px;min-height:44px}
+  #blRoot textarea.inp{min-height:96px}
+  .bl-ck{min-height:44px}
+  .modal .inp{font-size:16px}
+}
+@supports (overflow:clip){.card-x.bl-sec{overflow:clip}}
