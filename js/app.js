@@ -233,9 +233,22 @@ function openForm(o) {
 }
 
 function pickImage(camera) {
-  if (camera && camLiveOk()) return camLive();
+  if (camera && camLiveOk() && !camAsli()) return camLive();
   return pickFile(camera);
 }
+const CAM_ASLI = 'simop-cam-asli';
+const camAsli = () => { if (CAMV.perm === 'granted') return false; try { return localStorage.getItem(CAM_ASLI) === '1'; } catch (e) { return false; } };
+function camAsliSet(on) { try { if (on) localStorage.setItem(CAM_ASLI, '1'); else localStorage.removeItem(CAM_ASLI); } catch (e) { } }
+const camPwa = () => (window.matchMedia && matchMedia('(display-mode: standalone)').matches) || navigator.standalone === true;
+(function camPermWatch() {
+  try {
+    if (!navigator.permissions || !navigator.permissions.query) return;
+    navigator.permissions.query({ name: 'camera' }).then(p => {
+      const up = () => { CAMV.perm = p.state; if (p.state === 'granted') camAsliSet(false); };
+      up(); p.onchange = up;
+    }).catch(() => { });
+  } catch (e) { }
+})();
 function pickFile(camera) {
   return new Promise(res => {
     const old = $('#pickInp'); if (old) old.remove();
@@ -277,13 +290,19 @@ async function camLiveStart() {
     try { await v.play(); } catch (e) { }
     v.classList.toggle('mirror', CAMV.face === 'user');
     wait.hidden = true; shot.disabled = false; shot.focus();
+    camAsliSet(false);
   } catch (e) {
     wait.hidden = true;
     const izin = e && (e.name === 'NotAllowedError' || e.name === 'SecurityError');
+    camAsliSet(true);
+    const cara = camPwa()
+      ? 'Agar kamera bisa langsung di dalam SIMOP: buka aplikasi <b>Chrome</b> → ⋮ → <b>Setelan</b> → <b>Setelan situs</b> → <b>Kamera</b> → ketuk alamat SIMOP di daftar <b>Diblokir</b> → <b>Izinkan</b>. Lalu tutup SIMOP dan buka lagi.'
+      : 'Agar kamera bisa langsung di dalam SIMOP: ketuk ikon di kiri alamat situs → <b>Izin</b> → <b>Kamera</b> → <b>Izinkan</b>, lalu muat ulang.';
     msg.hidden = false;
-    msg.innerHTML = izin
-      ? '<i class="bi bi-camera-video-off"></i><b>Izin kamera ditolak</b><p>Ketuk ikon gembok di samping alamat situs → Izin → Kamera → Izinkan, lalu coba lagi. Bisa juga pakai <b>Kamera HP</b> atau <b>Galeri</b> di bawah.</p><button type="button" class="btn-x btn-p btn-sm" data-cv="retry"><i class="bi bi-arrow-clockwise"></i> Coba lagi</button>'
-      : '<i class="bi bi-camera-video-off"></i><b>Kamera tidak bisa dibuka di sini</b><p>Pakai <b>Kamera HP</b> (aplikasi kamera bawaan) atau pilih foto dari <b>Galeri</b>.</p>';
+    msg.innerHTML = `<i class="bi bi-camera-video-off"></i><b>${izin ? 'Kamera di dalam SIMOP diblokir' : 'Kamera tidak bisa dibuka di sini'}</b>
+      <p>Tidak apa-apa, pakai <b>kamera bawaan HP</b> saja. Mulai sekarang tombol Foto langsung membuka kamera bawaan HP.</p>
+      <button type="button" class="btn-x btn-p" data-cv="hp"><i class="bi bi-camera-fill"></i> Buka kamera HP</button>
+      ${izin ? `<details class="camv-cara"><summary>Cara mengizinkan kamera di dalam SIMOP</summary><p>${cara}</p><button type="button" class="btn-x btn-o btn-sm" data-cv="retry"><i class="bi bi-arrow-clockwise"></i> Coba lagi</button></details>` : ''}`;
   }
 }
 function camLiveClose(f) {

@@ -5,7 +5,7 @@
 // - Pustaka CDN (Bootstrap, ikon, font): pakai salinan tersimpan, diperbarui diam-diam.
 // - Permintaan ke Google Apps Script (data) TIDAK PERNAH disentuh / disimpan.
 // ============================================================
-const VERSI = 'simop-20261123';
+const VERSI = 'simop-202611231';
 const SHELL = ['./', './index.html', './css/style.css', './js/api.js', './js/app.js', './js/config.js', './manifest.webmanifest', './icons/icon-192.png'];
 const CDN = /^https:\/\/(cdn\.jsdelivr\.net|fonts\.googleapis\.com|fonts\.gstatic\.com)\//;
 

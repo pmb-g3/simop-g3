@@ -1349,3 +1349,7 @@ body.auth-mode .page{background:transparent;border:0;box-shadow:none;border-radi
   .modal .inp{font-size:16px}
 }
 @supports (overflow:clip){.card-x.bl-sec{overflow:clip}}
+.camv-msg .btn-x.btn-p{min-height:48px;padding:.6rem 1.2rem;font-size:15px}
+.camv-cara{width:100%;text-align:left;font-size:13px;margin-top:.35rem;border-top:1px solid rgba(255,255,255,.15);padding-top:.5rem}
+.camv-cara summary{cursor:pointer;font-weight:600;opacity:.9;padding:.35rem 0}
+.camv-cara p{margin:.35rem 0 .5rem}
