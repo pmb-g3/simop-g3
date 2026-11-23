@@ -44,7 +44,7 @@ function toast(msg, type) {
   $('#toasts').appendChild(el);
   setTimeout(() => el.remove(), type === 'err' ? 6500 : 3600);
 }
-const READ_ACT = new Set(['dash.get', 'karyawan.list', 'absensi.get', 'rekap.absensi', 'rekap.bayar', 'rekap.list', 'izin.list', 'sub.list', 'program.list', 'katalog.list', 'material.list', 'piket.list', 'piket.staff', 'keu.list', 'armada.list', 'admin.users', 'admin.audit', 'admin.config', 'pilihan.list', 'minggu.info', 'mat.rekap', 'wa.config', 'blangko.hari', 'blangko.list', 'blangko.rekap', 'pj.list', 'dash.pengawas', 'blangko.ringkas']);
+const READ_ACT = new Set(['dash.get', 'presensi.ringkas', 'log.aktivitas', 'karyawan.list', 'absensi.get', 'rekap.absensi', 'rekap.bayar', 'rekap.list', 'izin.list', 'sub.list', 'program.list', 'katalog.list', 'material.list', 'piket.list', 'piket.staff', 'keu.list', 'armada.list', 'admin.users', 'admin.audit', 'admin.config', 'pilihan.list', 'minggu.info', 'mat.rekap', 'wa.config', 'blangko.hari', 'blangko.list', 'blangko.rekap', 'pj.list', 'dash.pengawas', 'blangko.ringkas']);
 const DC = { mem: {}, mode: 'net', changed: false, bg: false, user: '', ver: '', pv: {}, want: null, fresh: null };
 const NOWRITE = new Set(['file.get', 'file.thumbs', 'import.check', 'batch.read', 'sync.ver', 'program.laporan', 'wa.preview', 'wa.groups']);
 const DC_MISS = new Error('cache-miss');
@@ -129,7 +129,9 @@ function apiM(action, payload, quiet, o) {
   }, err => { if (!q) loader(-1); if (optRow) optRow.classList.remove('opt-out'); throw err; });
 }
 const api = (a, p, q) => apiM(a, p, q).then(r => r.data);
-const sbRute = a => a === 'dash.pengawas' || a === 'blangko.ringkas' || (/^(blangko|pj)\./.test(a) && a !== 'blangko.exportRekap' && sbAktif('blangko'));
+const sbRute = a => a === 'dash.pengawas' || a === 'blangko.ringkas' || a === 'presensi.ringkas' || a === 'log.aktivitas'
+  || (/^(blangko|pj)\./.test(a) && a !== 'blangko.exportRekap' && sbAktif('blangko'))
+  || (/^(karyawan|absensi|izin)\.|^rekap\.absensi$/.test(a) && sbAktif('presensi'));
 async function act(btn, fn) {
   if (btn) { if (btn.classList.contains('busy')) return; btn.classList.add('busy'); }
   try { return await fn(); } catch (e) { toast(e.message || String(e), 'err'); } finally { if (btn) btn.classList.remove('busy'); }
@@ -797,7 +799,7 @@ function bootHtml() {
   const arcs = [1, 2, 3, 4, 5, 6].map(i => `<span class="arc a${i}"></span>`).join('');
   return `<div class="boot" role="status" aria-live="polite" aria-label="Memuat aplikasi"><div class="boot-stage">${arcs}<div class="boot-logo">${logoImg()}</div></div></div>`;
 }
-const NEED_BUILD = 20261123;
+const NEED_BUILD = 202611231;
 function buildCheck(cfg) {
   const b = Number(cfg && cfg.build || 0), old = $('#buildWarn');
   if (b >= NEED_BUILD) { if (old) old.remove(); return; }
@@ -923,6 +925,10 @@ const hk = x => String(x).replace('.', ',');
 PAGES.dashboard = async function () {
   const d = role() === 'pengawas' && sbAktif('blangko') ? await api('dash.pengawas') : await api('dash.get');
   if (sbAktif('blangko') && d.role !== 'toko' && d.role !== 'pengawas') { try { d.blangko = await api('blangko.ringkas'); } catch (e) { if (e === DC_MISS) throw e; d.blangko = null; } }
+  if (sbAktif('presensi') && d.role !== 'toko' && d.role !== 'pengawas') { try { d.presensi = await api('presensi.ringkas'); } catch (e) { if (e === DC_MISS) throw e; d.presensi = null; } }
+  if (SB.cfg && SB.cfg.modul && SB.cfg.modul.length && isStaff() && Array.isArray(d.aktivitas)) {
+    try { const la = await api('log.aktivitas', { n: 30 }); d.aktivitas = d.aktivitas.concat(la || []).sort((a, b) => String(b.waktu).localeCompare(String(a.waktu))).slice(0, 30); } catch (e) { if (e === DC_MISS) throw e; }
+  }
   S.dash = { d: d };
   if (d.role === 'toko') return dashToko(d);
   if (d.role === 'pengawas') return { html: dashPengawas(d), init: () => { } };
@@ -2390,7 +2396,8 @@ function sbSetHtml(c) {
       <div class="full"><label class="lbl" for="sbSec">Kunci rahasia (Secret key)</label><input class="inp" id="sbSec" type="password" autocomplete="new-password" placeholder="${c.secret ? E(c.secret) + ' (kosongkan bila tidak diganti)' : 'sb_secret_\u2026'}"><div class="help">Supabase \u2192 Project Settings \u2192 API Keys \u2192 Secret key.</div></div>
       <div class="full row-f gap2 wrap"><button class="btn-x btn-p" onclick="sbSimpanUI(this)"><i class="bi bi-save"></i> Simpan & uji koneksi</button>${c.siap ? '<button class="btn-x btn-o" onclick="sbStatusUI(this)"><i class="bi bi-activity"></i> Cek status</button>' : ''}</div>
     </form><div id="sbStat" class="mt2"></div>
-    <h3 style="font-size:14px;margin:1rem 0 .5rem">Modul</h3><div class="stack" style="max-width:640px">${modul}</div>`;
+    <h3 style="font-size:14px;margin:1rem 0 .5rem">Modul</h3><div class="stack" style="max-width:640px">${modul}</div>
+    ${c.modul && c.modul.length ? `<p class="muted mt1" style="font-size:12.5px"><i class="bi bi-cloud-arrow-down"></i> Cadangan malam ke Google Sheets (pukul 23.00): ${c.cadangan ? 'terakhir <b>' + E(fdt(c.cadangan)) + '</b>' : '<b>belum pernah berjalan</b>'}</p>` : ''}`;
 }
 async function sbSimpanUI(btn) {
   await act(btn, async () => {
