@@ -799,7 +799,7 @@ function bootHtml() {
   const arcs = [1, 2, 3, 4, 5, 6].map(i => `<span class="arc a${i}"></span>`).join('');
   return `<div class="boot" role="status" aria-live="polite" aria-label="Memuat aplikasi"><div class="boot-stage">${arcs}<div class="boot-logo">${logoImg()}</div></div></div>`;
 }
-const NEED_BUILD = 20261124;
+const NEED_BUILD = 202611241;
 function buildCheck(cfg) {
   const n9 = x => Number(String(x || 0).replace(/\D/g, '').padEnd(9, '0').slice(0, 9));
   const b = n9(cfg && cfg.build), old = $('#buildWarn');
@@ -951,7 +951,7 @@ function kpi(cls, label, icon, num, sub, extra) {
 const KOL_LBL = { Direncanakan: 'Program Kerja', Berjalan: 'Proses', Selesai: 'Hasil Usaha' };
 const WG_DEF = {
   hadir: { t: 'Kehadiran pekerja', i: 'bi-people-fill', c: 'g', size: 'lg', sizes: ['lg', 'tall', 'wide', 'sm'] },
-  keuangan: { t: 'Keuangan TS & Proyek', i: 'bi-wallet2', c: 'w', size: 'wide', sizes: ['wide', 'lg', 'tall', 'sm'] },
+  keuangan: { t: 'Keuangan TS & Proyek', i: 'bi-wallet2', c: 'w', size: 'lg', sizes: ['lg', 'wide', 'tall', 'sm'] },
   piket: { t: 'Piket hari ini', i: 'bi-clipboard-check', c: '', size: 'sm', sizes: ['sm', 'tall', 'wide'] },
   blangko: { t: 'Blangko pengawasan', i: 'bi-clipboard2-check', c: 'g', size: 'tall', sizes: ['tall', 'wide', 'sm'] },
   armada: { t: 'Armada', i: 'bi-truck', c: '', size: 'sm', sizes: ['sm', 'tall', 'wide'] },
@@ -967,9 +967,10 @@ function wgLayout() {
   const list = [], seen = {};
   (o && Array.isArray(o.list) ? o.list : []).forEach(x => { const f = x && WG_DEF[x.id]; if (f && !seen[x.id]) { seen[x.id] = 1; list.push({ id: x.id, size: f.sizes.indexOf(x.size) >= 0 ? x.size : f.size, hide: !!x.hide }); } });
   WG_ORDER.forEach(id => { if (!seen[id]) list.push({ id: id, size: WG_DEF[id].size, hide: !!WG_DEF[id].hide }); });
+  if (!o || !o.keu2) { const k = list.find(x => x.id === 'keuangan'); if (k && k.size === 'wide') k.size = 'lg'; }
   return list;
 }
-function wgSave(list) { try { localStorage.setItem(wgKey(), JSON.stringify({ list: list })); } catch (e) { } }
+function wgSave(list) { try { localStorage.setItem(wgKey(), JSON.stringify({ list: list, keu2: 1 })); } catch (e) { } }
 const emptyMini = t => `<div class="muted" style="font-size:12.5px;padding:.35rem 0">${E(t)}</div>`;
 const fdShort = s => { if (!s || !/^\d{4}-\d{2}-\d{2}/.test(s)) return ''; const t = new Date(parseD(s)); return t.getUTCDate() + ' ' + BLN[t.getUTCMonth()]; };
 
@@ -1021,7 +1022,11 @@ function wArmada(d) {
     ? `<div class="car"><i class="bi bi-truck ci"></i><div class="tx">${E(a.Kendaraan)}<small>Ada di garasi</small></div><span class="pill pill-ok">Ada</span></div>`
     : `<div class="car out"><i class="bi bi-truck ci"></i><div class="tx">${E(a.Kendaraan)}<small>Dipinjam ${E(a.Pengguna || '\u2013')}${a.Tujuan ? ' \u00B7 ' + E(a.Tujuan) : ''}${a.WaktuKeluar ? ' \u00B7 sejak ' + E(String(a.WaktuKeluar).slice(11, 16)) : ''}</small></div><span class="pill pill-warn">Keluar</span></div>`).join('');
 }
+const keuDashK = k => ({ bagian: k.bagian, mini: true, items: (k.riwayat || []).map(x => ({ MingguKe: x.no, TglMulai: x.st, Nominal: x.n, Material: x.m, Alat: x.a, Ongker: x.o })) });
 function wKeu(d) {
+  if (d.keuangan.every(k => (k.riwayat || []).every(x => x.st))) {
+    return `<div class="keu-wg">${d.keuangan.map(k => `<div class="keu-ch keu-mini ${k.bagian === 'Proyek' ? 'pr' : 'ts'}" data-keuw="${E(k.bagian)}">${keuChartHtml(keuDashK(k))}<div class="keu-wt"><span>Total semua minggu</span><b class="num">${Rp(k.total)}</b></div></div>`).join('')}</div>`;
+  }
   return `<div class="keu-g">${d.keuangan.map(k => {
     const pr = k.bagian === 'Proyek', mx = Math.max(1, ...k.riwayat.map(x => x.n));
     return `<div class="keu-c ${pr ? 'pr' : ''}" title="Total Minggu ke-${k.dari || 0} s.d. ke-${k.ke || 0}"><small>${E(k.bagian.toUpperCase())} \u00B7 TOTAL</small><div class="v num">${Rp(k.total)}</div><div class="k"><span>Minggu lalu${k.lalu ? ' (M-' + k.lalu.no + ')' : ''}</span><b>${k.lalu ? Rp(k.lalu.n) : '\u2013'}</b></div><div class="k"><span>Minggu ini (M-${k.mingguIni})</span><b>${k.ini ? Rp(k.ini.n) : 'belum'}</b></div><div class="spark" aria-hidden="true">${k.riwayat.map(x => `<i style="height:${Math.max(14, Math.round(x.n / mx * 100))}%" title="M-${x.no}: ${Rp(x.n)}"></i>`).join('')}</div></div>`;
@@ -1046,6 +1051,7 @@ function wGaleri(d) {
 function wAkt(d) { return aktivitasHtml(d.aktivitas); }
 function dashInit(c) {
   loadThumbs(c);
+  ((S.dash && S.dash.d && S.dash.d.keuangan) || []).forEach(k => { const box = $(`[data-keuw="${CSS.escape(k.bagian)}"]`, c); if (box) keuChartInit(box, keuDashK(k)); });
   const grid = $('#wgGrid', c); if (!grid) return;
   grid.addEventListener('click', e => {
     const tool = e.target.closest('[data-wsize],[data-whide]');
@@ -1505,7 +1511,7 @@ function keuHtml() {
 const keuJt = n => { n = Number(n) || 0; return n >= 1e9 ? (n / 1e9).toLocaleString('id-ID', { maximumFractionDigits: 1 }) + ' M' : n >= 1e6 ? (n / 1e6).toLocaleString('id-ID', { maximumFractionDigits: 1 }) + ' jt' : n >= 1e3 ? Math.round(n / 1e3).toLocaleString('id-ID') + ' rb' : String(n); };
 const keuRgOf = b => (S.keuRg && b in S.keuRg ? S.keuRg[b] : 12);
 function keuSeri(k) {
-  const rg = keuRgOf(k.bagian), all = k.items.slice().sort((a, b) => a.TglMulai.localeCompare(b.TglMulai));
+  const rg = k.mini ? 8 : keuRgOf(k.bagian), all = k.items.slice().sort((a, b) => a.TglMulai.localeCompare(b.TglMulai));
   return rg && all.length > rg ? all.slice(-rg) : all;
 }
 function keuPath(P) {
@@ -1527,16 +1533,16 @@ function keuGeo(k) {
   return { s: s, n: n, max: max, X: X, Y: Y };
 }
 function keuChartHtml(k) {
-  const G = keuGeo(k), id = 'kc' + (k.bagian === 'Proyek' ? 'pr' : 'ts'), rg = keuRgOf(k.bagian);
+  const G = keuGeo(k), id = 'kc' + (k.mini ? 'w' : '') + (k.bagian === 'Proyek' ? 'pr' : 'ts'), rg = keuRgOf(k.bagian);
   if (!G.n) return `<div class="keu-empty muted"><i class="bi bi-graph-down"></i> Diagram muncul setelah ada data mingguan.</div>`;
   const tot = G.s.map((x, i) => [G.X(i), G.Y(x.Nominal)]);
   const sub = KEU_R.map(r => G.s.map((x, i) => (keuAda(x) ? [G.X(i), G.Y(x[r[0]])] : null)));
   const grid = [0.25, 0.5, 0.75].map(f => `<line x1="0" x2="${KEU_W}" y1="${(KEU_H * f).toFixed(1)}" y2="${(KEU_H * f).toFixed(1)}" class="keu-grid" vector-effect="non-scaling-stroke"/>`).join('');
-  const lab = G.n < 2 ? [0] : G.n <= 6 ? G.s.map((x, i) => i) : [0, Math.round((G.n - 1) / 3), Math.round(2 * (G.n - 1) / 3), G.n - 1];
+  const lab = G.n < 2 ? [0] : k.mini ? [0, G.n - 1] : G.n <= 6 ? G.s.map((x, i) => i) : [0, Math.round((G.n - 1) / 3), Math.round(2 * (G.n - 1) / 3), G.n - 1];
   const pills = [[8, '8 mgg'], [12, '12 mgg'], [0, 'Semua']].map(o => `<button type="button" class="${rg === o[0] || (!rg && !o[0]) ? 'on' : ''}" onclick="keuRange('${E(k.bagian)}',${o[0]})">${o[1]}</button>`).join('');
-  return `<div class="keu-hd"><div class="keu-lg"><span class="keu-lt"><i class="keu-sw tot"></i>Total pengeluaran</span><b class="keu-big num" data-kv="tot">–</b><span class="keu-wk muted" data-kv="wk"></span></div>
-      <div class="keu-rt"><div class="keu-pills" role="group" aria-label="Rentang diagram">${pills}</div><span class="keu-delta" data-kv="dl"></span></div></div>
-    <div class="keu-subs">${KEU_R.map(r => `<span class="keu-sub k-${r[1]}"><small><i class="keu-sw"></i>${r[2]}</small><b class="num" data-kv="${r[1]}">–</b><em data-kv="${r[1]}p"></em></span>`).join('')}</div>
+  return `<div class="keu-hd"><div class="keu-lg"><span class="keu-lt"><i class="keu-sw tot"></i>${k.mini ? E(k.bagian) : 'Total pengeluaran'}</span><b class="keu-big num" data-kv="tot">–</b><span class="keu-wk muted" data-kv="wk"></span></div>
+      <div class="keu-rt">${k.mini ? '' : `<div class="keu-pills" role="group" aria-label="Rentang diagram">${pills}</div>`}<span class="keu-delta" data-kv="dl"></span></div></div>
+    <div class="keu-subs">${KEU_R.map(r => `<span class="keu-sub k-${r[1]}"><small><i class="keu-sw"></i>${k.mini ? r[0] : r[2]}</small><b class="num" data-kv="${r[1]}">–</b><em data-kv="${r[1]}p"></em></span>`).join('')}</div>
     <div class="keu-plot" tabindex="0" role="img" aria-label="Diagram pengeluaran mingguan ${E(k.bagian)}. Geser atau tekan panah kiri/kanan untuk melihat tiap minggu." data-n="${G.n}">
       <svg viewBox="0 0 ${KEU_W} ${KEU_H}" preserveAspectRatio="none" aria-hidden="true"><defs><linearGradient id="${id}f" x1="0" x2="0" y1="0" y2="1"><stop offset="0" class="keu-st0"/><stop offset="1" class="keu-st1"/></linearGradient></defs>${grid}
         ${G.n > 1 ? `<path d="${keuPath(tot)} L ${tot[G.n - 1][0]} ${KEU_H} L ${tot[0][0]} ${KEU_H} Z" fill="url(#${id}f)" class="keu-area"/>` : ''}
@@ -1560,8 +1566,9 @@ function keuChartInit(box, k) {
     cur = Math.max(0, Math.min(G.n - 1, i));
     const x = G.s[cur], prev = cur > 0 ? G.s[cur - 1] : null, tot = Number(x.Nominal) || 0, ada = keuAda(x), lp = G.X(cur) / KEU_W * 100;
     set('tot', Rp(tot));
-    set('wk', 'Minggu ke-' + x.MingguKe + ' · ' + fdate(x.TglMulai) + ' – ' + fdate(addD(x.TglMulai, 6)) + (cycStart(todayStr()) === x.TglMulai ? ' · minggu ini' : ''));
-    KEU_R.forEach(r => { const v = ada ? Number(x[r[0]]) || 0 : null; set(r[1], v === null ? '–' : Rp(v)); set(r[1] + 'p', v === null || !tot ? '' : Math.round(v / tot * 100) + '%'); const w = $(`[data-kv="${r[1]}w"]`, box); if (w) w.style.flexGrow = v === null ? 0 : Math.max(v, 0.0001); });
+    const ini = cycStart(todayStr()) === x.TglMulai;
+    set('wk', k.mini ? 'M-' + x.MingguKe + ' · ' + keuPer(x.TglMulai) + (ini ? ' · minggu ini' : '') : 'Minggu ke-' + x.MingguKe + ' · ' + fdate(x.TglMulai) + ' – ' + fdate(addD(x.TglMulai, 6)) + (ini ? ' · minggu ini' : ''));
+    KEU_R.forEach(r => { const v = ada ? Number(x[r[0]]) || 0 : null; set(r[1], v === null ? '–' : k.mini ? 'Rp ' + keuJt(v) : Rp(v)); set(r[1] + 'p', v === null || !tot ? '' : Math.round(v / tot * 100) + '%'); const w = $(`[data-kv="${r[1]}w"]`, box); if (w) w.style.flexGrow = v === null ? 0 : Math.max(v, 0.0001); });
     const bar = $('.keu-bar', box); if (bar) bar.classList.toggle('kosong', !ada);
     const dl = $('[data-kv="dl"]', box);
     if (dl) {
@@ -1569,7 +1576,7 @@ function keuChartInit(box, k) {
       else {
         const pv = Number(prev.Nominal) || 0, d = tot - pv, pc = pv ? Math.abs(d) / pv * 100 : 0;
         dl.className = 'keu-delta ' + (d < 0 ? 'turun' : d > 0 ? 'naik' : '');
-        dl.innerHTML = d === 0 ? '= sama dengan minggu lalu' : `<i class="bi ${d < 0 ? 'bi-arrow-down-right' : 'bi-arrow-up-right'}"></i> ${pc.toLocaleString('id-ID', { maximumFractionDigits: 1 })}% · ${d < 0 ? '−' : '+'}Rp ${keuJt(Math.abs(d))} ${d < 0 ? '(lebih hemat)' : 'vs minggu lalu'}`;
+        dl.innerHTML = d === 0 ? '= sama dengan minggu lalu' : `<i class="bi ${d < 0 ? 'bi-arrow-down-right' : 'bi-arrow-up-right'}"></i> ${pc.toLocaleString('id-ID', { maximumFractionDigits: 1 })}% · ${d < 0 ? '−' : '+'}Rp ${keuJt(Math.abs(d))} ${d < 0 ? (k.mini ? 'hemat' : '(lebih hemat)') : (k.mini ? '' : 'vs minggu lalu')}`;
         dl.title = 'Minggu lalu (M-' + prev.MingguKe + '): ' + Rp(pv);
       }
     }
@@ -1584,7 +1591,7 @@ function keuChartInit(box, k) {
   plot.addEventListener('keydown', e => { if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') { e.preventDefault(); show(cur + (e.key === 'ArrowLeft' ? -1 : 1), true); } });
   plot.addEventListener('blur', () => show(G.n - 1, false));
   show(G.n - 1, false);
-  requestAnimationFrame(() => box.classList.add('tampil'));
+  void box.offsetWidth; setTimeout(() => box.classList.add('tampil'), 30);
 }
 function keuPat(bagian) { const g = (S.keu && S.keu.data || []).find(x => x.bagian === bagian); return g && g.patokanAwal ? cycStart(g.patokanAwal) : ''; }
 function keuWeekOf(bagian, tgl) { const p = keuPat(bagian); if (!p || !tgl) return 0; const n = Math.floor((parseD(cycStart(tgl)) - parseD(p)) / (7 * 864e5)) + 1; return n < 1 ? 1 : n; }

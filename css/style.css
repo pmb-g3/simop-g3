@@ -1438,3 +1438,57 @@ body.auth-mode .page{background:transparent;border:0;box-shadow:none;border-radi
   .keu-delta{white-space:normal;line-height:1.35}
   .keu-pills button{padding:.2rem .5rem}
 }
+/* ── Widget dashboard Keuangan memakai diagram yang sama (versi ringkas) ── */
+.keu-wg{display:grid;grid-template-columns:1fr 1fr;gap:.75rem;height:100%}
+.keu-mini.ts{--ka:var(--em-a)}.keu-mini.pr{--ka:var(--primary)}
+.keu-mini{padding:.6rem .7rem .55rem;border-radius:14px;border:1px solid var(--border);min-width:0;display:flex;flex-direction:column}
+.keu-mini .keu-big{font-size:20px;line-height:26px}
+.keu-mini .keu-lt{text-transform:uppercase;letter-spacing:.05em;font-size:10.5px;font-weight:800}
+.keu-mini.ts .keu-lt{color:var(--em)}.keu-mini.pr .keu-lt{color:var(--primary-deep)}
+.keu-mini .keu-wk{font-size:11px}
+.keu-mini .keu-rt{margin-left:0}
+.keu-mini .keu-delta{font-size:11px;padding:.15rem .5rem;white-space:normal}
+.keu-mini .keu-subs{gap:.3rem;margin:.45rem 0 0}
+.keu-mini .keu-sub{padding:.25rem .4rem}.keu-mini .keu-sub small{font-size:10px}.keu-mini .keu-sub b{font-size:11.5px}.keu-mini .keu-sub em{font-size:10px}
+.keu-mini .keu-plot{height:96px;flex:1 1 96px;min-height:80px;margin-top:.35rem}
+.keu-mini .keu-x{height:15px;font-size:10px;margin-top:.2rem}
+.keu-mini .keu-bar{height:4px;margin-top:.35rem}
+.keu-wt{display:flex;justify-content:space-between;gap:.5rem;font-size:11.5px;color:var(--muted);margin-top:.4rem;padding-top:.35rem;border-top:1px dashed var(--border)}
+.keu-wt b{color:var(--text)}
+.wg[data-size="tall"] .keu-wg,.wg[data-size="sm"] .keu-wg{grid-template-columns:1fr}
+.wg[data-size="tall"] .keu-mini .keu-plot{height:130px}
+.wg[data-size="sm"] .keu-mini .keu-subs,.wg[data-size="sm"] .keu-mini .keu-bar{display:none}
+@media (max-width:575.98px){.keu-wg{grid-template-columns:1fr}.keu-mini .keu-plot{height:110px}}
+/* ukuran widget Keuangan: isi menyesuaikan tinggi kotak */
+.keu-wg{align-items:stretch;min-height:0}
+.keu-mini{min-height:0;overflow:hidden}
+.keu-mini .keu-plot{flex:1 1 auto;height:auto;min-height:48px}
+.wg[data-size="lg"] .keu-mini .keu-plot{min-height:110px}
+.wg[data-size="wide"] .keu-mini{padding:.45rem .6rem}
+.wg[data-size="wide"] .keu-mini .keu-hd{flex-wrap:nowrap;align-items:center}
+.wg[data-size="wide"] .keu-mini .keu-wk,.wg[data-size="wide"] .keu-mini .keu-subs,.wg[data-size="wide"] .keu-mini .keu-bar,.wg[data-size="wide"] .keu-mini .keu-wt,.wg[data-size="wide"] .keu-mini .keu-delta{display:none}
+.wg[data-size="wide"] .keu-mini .keu-big{font-size:17px;line-height:22px}
+.wg[data-size="tall"] .keu-mini .keu-subs,.wg[data-size="tall"] .keu-mini .keu-bar,.wg[data-size="tall"] .keu-mini .keu-wt{display:none}
+.wg[data-size="tall"] .keu-mini .keu-plot{height:auto}
+.wg[data-size="sm"] .keu-mini{padding:.35rem .5rem}
+.wg[data-size="sm"] .keu-mini .keu-wk,.wg[data-size="sm"] .keu-mini .keu-delta,.wg[data-size="sm"] .keu-mini .keu-wt,.wg[data-size="sm"] .keu-mini .keu-x{display:none}
+.wg[data-size="sm"] .keu-mini .keu-big{font-size:15px;line-height:19px}
+.wg[data-size="sm"] .keu-mini .keu-plot{min-height:26px;margin-top:.15rem}
+@media (max-width:767.98px){
+  .keu-wg{grid-template-columns:1fr}
+  .wg .keu-mini .keu-wk,.wg .keu-mini .keu-x,.wg .keu-mini .keu-bar{display:block}.wg .keu-mini .keu-bar{display:flex}.wg .keu-mini .keu-delta{display:inline-block}.wg .keu-mini .keu-subs{display:grid}.wg .keu-mini .keu-wt{display:flex}
+  .wg .keu-mini .keu-plot{flex:none;height:110px}
+}
+.keu-mini .keu-subs{grid-template-columns:repeat(3,minmax(0,1fr))}
+.keu-mini .keu-sub{flex-direction:row;flex-wrap:wrap;align-items:baseline;column-gap:.3rem;row-gap:0}
+.keu-mini .keu-sub small{width:100%}
+.keu-mini .keu-sub b{font-size:12px}
+.keu-mini .keu-hd{gap:.35rem}
+.keu-mini .keu-rt{width:100%}
+.keu-mini .keu-sub b{white-space:normal;overflow:visible;line-height:1.2}
+.wg[data-size="tall"] .keu-wg,.wg[data-size="sm"] .keu-wg{grid-template-rows:repeat(2,minmax(0,1fr))}
+@media (max-width:767.98px){.wg .keu-wg{grid-template-rows:none}}
+.wg[data-size="tall"] .keu-mini .keu-wk,.wg[data-size="tall"] .keu-mini .keu-x{display:none}
+.wg[data-size="tall"] .keu-mini .keu-big{font-size:18px;line-height:22px}
+.wg[data-size="tall"] .keu-mini{padding:.45rem .6rem}
+@media (max-width:767.98px){#wgb_keuangan{max-height:none;overflow:visible}.wg .keu-mini{overflow:visible;min-height:auto}}
