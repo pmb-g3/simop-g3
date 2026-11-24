@@ -1497,12 +1497,16 @@ function keuPanel(k) {
       <div class="keu-cap">Angka dalam rupiah (Rp) · Total = Material + Alat + Ongker</div><div class="tbl-wrap" style="border:0;border-radius:0;max-height:620px;overflow-y:auto"><table class="tbl keu-tbl"><thead><tr><th>Minggu</th>${KEU_R.map(r => `<th class="n"><span class="keu-dot k-${r[1]}"></span>${r[0]}</th>`).join('')}<th class="n">Total</th><th class="n"><span class="sr-only">Aksi</span></th></tr></thead><tbody>${rows || '<tr><td colspan="6" class="muted tc">Belum ada data</td></tr>'}</tbody></table></div>
     </div></div>`;
 }
+function keuRinciTot(b) {
+  const it = ((S.keu.data.find(k => k.bagian === b) || {}).items || []), ada = it.filter(keuAda), lama = it.length - ada.length, sum = k => ada.reduce((n, x) => n + (Number(x[k]) || 0), 0);
+  return `<div class="keu-rt3">${KEU_R.map(r => `<span class="k-${r[1]}"><small><span class="keu-dot"></span>${r[2]}</small><b class="num">${Rp(sum(r[0]))}</b></span>`).join('')}</div>${lama ? `<p class="keu-rt3n">${lama} minggu lama belum dirinci (hanya total) · tidak ikut dihitung di atas</p>` : ''}`;
+}
 function keuHtml() {
   const tot = b => (S.keu.data.find(k => k.bagian === b) || { total: 0 }).total;
   return `<div class="page-head"><div><h1>Laporan keuangan</h1><p>Pengeluaran mingguan per bagian (Material, Alat, Ongkos kerja), dengan penomoran minggu masing-masing.</p></div><div class="row-f gap1 wrap"><button class="btn-x btn-o" onclick="importOpen('keuangan')"><i class="bi bi-file-earmark-spreadsheet"></i> Impor Excel</button><button class="btn-x btn-g" onclick="keuAdd()"><i class="bi bi-plus-lg"></i> Input laporan keuangan</button></div></div>
   <div class="two mb2">
-    <div class="sum-card ts"><small>TOTAL KEUANGAN TAMBAL SULAM</small><b class="num">${Rp(tot('Tambal Sulam'))}</b></div>
-    <div class="sum-card pr"><small>TOTAL KEUANGAN PROYEK</small><b class="num">${Rp(tot('Proyek'))}</b></div>
+    <div class="sum-card ts"><small>TOTAL KEUANGAN TAMBAL SULAM</small><b class="num">${Rp(tot('Tambal Sulam'))}</b>${keuRinciTot('Tambal Sulam')}</div>
+    <div class="sum-card pr"><small>TOTAL KEUANGAN PROYEK</small><b class="num">${Rp(tot('Proyek'))}</b>${keuRinciTot('Proyek')}</div>
   </div>
   <div class="two keu-two">${S.keu.data.map(keuPanel).join('')}</div>`;
 }
