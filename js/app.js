@@ -801,8 +801,9 @@ function bootHtml() {
 }
 const NEED_BUILD = 20261124;
 function buildCheck(cfg) {
-  const b = Number(cfg && cfg.build || 0), old = $('#buildWarn');
-  if (b >= NEED_BUILD) { if (old) old.remove(); return; }
+  const n9 = x => Number(String(x || 0).replace(/\D/g, '').padEnd(9, '0').slice(0, 9));
+  const b = n9(cfg && cfg.build), old = $('#buildWarn');
+  if (b >= n9(NEED_BUILD)) { if (old) old.remove(); return; }
   if (old || !document.body) return;
   const el = document.createElement('div'); el.id = 'buildWarn'; el.className = 'build-warn'; el.setAttribute('role', 'alert');
   el.innerHTML = '<b>Backend (Apps Script) belum diperbarui.</b> Beberapa fitur akan menampilkan "Aksi/Jenis tidak dikenal". Buka editor Apps Script \u2192 pastikan isi file Kode sudah versi terbaru \u2192 <b>Deploy \u2192 Manage deployments \u2192 ikon pensil \u2192 Version: New version \u2192 Deploy</b>. <button type="button" onclick="this.parentElement.remove()" aria-label="Tutup">\u00D7</button>';
