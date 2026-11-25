@@ -44,7 +44,7 @@ function toast(msg, type) {
   $('#toasts').appendChild(el);
   setTimeout(() => el.remove(), type === 'err' ? 6500 : 3600);
 }
-const READ_ACT = new Set(['dash.get', 'presensi.ringkas', 'log.aktivitas', 'karyawan.list', 'absensi.get', 'rekap.absensi', 'rekap.bayar', 'rekap.list', 'izin.list', 'sub.list', 'program.list', 'katalog.list', 'material.list', 'piket.list', 'piket.staff', 'keu.list', 'armada.list', 'admin.users', 'admin.audit', 'admin.config', 'pilihan.list', 'minggu.info', 'mat.rekap', 'wa.config', 'blangko.hari', 'blangko.list', 'blangko.rekap', 'pj.list', 'dash.pengawas', 'blangko.ringkas']);
+const READ_ACT = new Set(['dash.get', 'presensi.ringkas', 'log.aktivitas', 'karyawan.list', 'absensi.get', 'rekap.absensi', 'rekap.bayar', 'rekap.list', 'izin.list', 'sub.list', 'program.list', 'katalog.list', 'material.list', 'piket.list', 'piket.staff', 'keu.list', 'armada.list', 'admin.users', 'admin.audit', 'admin.config', 'pilihan.list', 'minggu.info', 'mat.rekap', 'wa.config', 'blangko.hari', 'blangko.list', 'blangko.rekap', 'pj.list', 'dash.pengawas', 'blangko.ringkas', 'material.ringkas']);
 const DC = { mem: {}, mode: 'net', changed: false, bg: false, user: '', ver: '', pv: {}, want: null, fresh: null };
 const NOWRITE = new Set(['file.get', 'file.thumbs', 'import.check', 'batch.read', 'sync.ver', 'program.laporan', 'wa.preview', 'wa.groups']);
 const DC_MISS = new Error('cache-miss');
@@ -129,9 +129,16 @@ function apiM(action, payload, quiet, o) {
   }, err => { if (!q) loader(-1); if (optRow) optRow.classList.remove('opt-out'); throw err; });
 }
 const api = (a, p, q) => apiM(a, p, q).then(r => r.data);
-const sbRute = a => a === 'dash.pengawas' || a === 'blangko.ringkas' || a === 'presensi.ringkas' || a === 'log.aktivitas'
+const sbRute = a => a === 'dash.pengawas' || a === 'blangko.ringkas' || a === 'presensi.ringkas' || a === 'log.aktivitas' || a === 'material.ringkas'
   || (/^(blangko|pj)\./.test(a) && a !== 'blangko.exportRekap' && sbAktif('blangko'))
-  || (/^(karyawan|absensi|izin)\.|^rekap\.absensi$/.test(a) && sbAktif('presensi'));
+  || (/^(karyawan|absensi|izin)\.|^rekap\.absensi$/.test(a) && sbAktif('presensi'))
+  || (/^(katalog|material|bayar)\.|^mat\.rekap$|^rekap\.bayar$/.test(a) && sbAktif('material'));
+async function matFoto(jenis, m, ph) {
+  if (!ph || !m) return {};
+  const r = await apiM('foto.material', { jenis: jenis, nota: m.NoNota, tanggal: m.Tanggal, data: ph.data, mime: ph.mime }, true);
+  return { url: r.data.url };
+}
+const matNotif = p => apiM('notif.material', p, true, { silent: true }).catch(() => { });
 async function act(btn, fn) {
   if (btn) { if (btn.classList.contains('busy')) return; btn.classList.add('busy'); }
   try { return await fn(); } catch (e) { toast(e.message || String(e), 'err'); } finally { if (btn) btn.classList.remove('busy'); }
@@ -799,7 +806,7 @@ function bootHtml() {
   const arcs = [1, 2, 3, 4, 5, 6].map(i => `<span class="arc a${i}"></span>`).join('');
   return `<div class="boot" role="status" aria-live="polite" aria-label="Memuat aplikasi"><div class="boot-stage">${arcs}<div class="boot-logo">${logoImg()}</div></div></div>`;
 }
-const NEED_BUILD = 202611241;
+const NEED_BUILD = 202611251;
 function buildCheck(cfg) {
   const n9 = x => Number(String(x || 0).replace(/\D/g, '').padEnd(9, '0').slice(0, 9));
   const b = n9(cfg && cfg.build), old = $('#buildWarn');
@@ -927,6 +934,10 @@ PAGES.dashboard = async function () {
   const d = role() === 'pengawas' && sbAktif('blangko') ? await api('dash.pengawas') : await api('dash.get');
   if (sbAktif('blangko') && d.role !== 'toko' && d.role !== 'pengawas') { try { d.blangko = await api('blangko.ringkas'); } catch (e) { if (e === DC_MISS) throw e; d.blangko = null; } }
   if (sbAktif('presensi') && d.role !== 'toko' && d.role !== 'pengawas') { try { d.presensi = await api('presensi.ringkas'); } catch (e) { if (e === DC_MISS) throw e; d.presensi = null; } }
+  if (sbAktif('material') && d.role !== 'pengawas') {
+    try { Object.assign(d, await api('material.ringkas')); }
+    catch (e) { if (e === DC_MISS) throw e; Object.assign(d, { tagihan: { total: 0, nota: 0 } }, d.role === 'toko' ? { latest: [], masuk: 0, terkirimSiklus: 0, lunasSiklus: 0 } : {}); }
+  }
   if (SB.cfg && SB.cfg.modul && SB.cfg.modul.length && isStaff() && Array.isArray(d.aktivitas)) {
     try { const la = await api('log.aktivitas', { n: 30 }); d.aktivitas = d.aktivitas.concat(la || []).sort((a, b) => String(b.waktu).localeCompare(String(a.waktu))).slice(0, 30); } catch (e) { if (e === DC_MISS) throw e; }
   }
@@ -2310,8 +2321,10 @@ function matStatus(id) {
     ],
     values: { status: m.StatusKirim, pengirim: m.NamaPengirim },
     save: async d => {
-      const ph = (S.photo || {}).kirimFoto;
-      const r = await apiM('material.status', { id: id, status: d.status, pengirim: d.pengirim, data: ph ? ph.data : '', mime: ph ? ph.mime : '' });
+      const ph = (S.photo || {}).kirimFoto, sbm = sbAktif('material');
+      const r = sbm ? await apiM('material.status', Object.assign({ id: id, status: d.status, pengirim: d.pengirim }, d.status === 'Terkirim' ? await matFoto('kirim', m, ph) : {}))
+        : await apiM('material.status', { id: id, status: d.status, pengirim: d.pengirim, data: ph ? ph.data : '', mime: ph ? ph.mime : '' });
+      if (sbm && d.status === 'Terkirim' && m.StatusKirim !== 'Terkirim') matNotif({ jenis: 'tiba', id: id });
       toast(r.message, 'ok'); closeModal(); navigateTo(AppState.page);
     }
   });
@@ -2393,6 +2406,7 @@ function submitOrder(btn) {
     });
     if (!items.length) throw new Error('Tambahkan minimal satu material.');
     const r = await apiM('material.order', { Bagian: bag, Tujuan: tuj, items: items });
+    if (sbAktif('material')) matNotif({ jenis: 'order', nota: r.data });
     toast(r.message + ' Nota: ' + r.data.join(', '), 'ok'); closeModal();
     if (AppState.page === 'material' || AppState.page === 'dashboard') navigateTo(AppState.page);
   });
@@ -2463,7 +2477,9 @@ function bayarSubmit(btn) {
   return act(btn, async () => {
     const ph = (S.photo || {}).bayarFoto, ver = $('#bayVer').value.trim();
     if (!ver) { $('#bayVer').focus(); throw new Error('Isi nama verifikator.'); }
-    const r = await apiM('bayar.verify', { ids: S.bayarTarget.ids, verifikator: ver, data: ph ? ph.data : '', mime: ph ? ph.mime : '' });
+    const r = sbAktif('material')
+      ? await apiM('bayar.verify', Object.assign({ ids: S.bayarTarget.ids, verifikator: ver }, await matFoto('bayar', S.bayar.rows.find(x => x.ID === S.bayarTarget.ids[0]), ph)))
+      : await apiM('bayar.verify', { ids: S.bayarTarget.ids, verifikator: ver, data: ph ? ph.data : '', mime: ph ? ph.mime : '' });
     toast(r.message + ' Total ' + Rp(r.data.total), 'ok'); closeModal(); navigateTo('pembayaran');
   });
 }
